@@ -1,0 +1,1676 @@
+Windows NT
+-
+IDPE 4.0(*UPD 4.1):
+ > http://indy-vx.narod.ru/Bin/IDPE4.zip
+-
+Обход AVVM через предсказание инструкций.
+ > http://indy-vx.narod.ru/Bin/VMBE.zip
+-
+Защита памяти от удаления(RC).
+	mov eax,RegionSize
+	add eax,X86_PAGE_SIZE - 1
+	and eax,NOT(X86_PAGE_SIZE - 1)
+	shr eax,11
+	invoke CreateBitmap, Eax, 4, 64, 64, RegionAddress
+-
+Простой пример S-маршрутизации.
+ > http://indy-vx.narod.ru/Bin/IDPxSrt.zip
+-
+ IRET_FRAME struct
+ rEip		PVOID ?
+ rSegCs		DWORD ?
+ rEFlags	DWORD ?
+ IRET_FRAME ends
+ PIRET_FRAME typedef ptr IRET_FRAME
+ 
+ ; +
+ ; Для предотвращения трассировки диспетчера изза T-бага в ядре, откатываем трап.
+ ; Это макро определяет адрес трапа, при котором его нужно пропустить сбросив TF.
+ ; Возвращает:
+ ; Eax - адрес второй инструкции диспетчера исключений.
+ ;
+ %PKITRAP macro
+ Local kitrap_safe
+	xor eax,eax
+ ; Адрес трапа будет возвращаться в этот фрейм.
+	push eax
+	push ebp
+	Call @f
+	jmp kitrap_safe
+ @@:
+	Call @f
+ ; SEH()
+	mov eax,dword ptr [esp + 4]
+	mov ecx,dword ptr [esp + 2*4]
+	mov edx,dword ptr [esp + 3*4]
+	cmp EXCEPTION_RECORD.ExceptionCode[eax],STATUS_SINGLE_STEP
+	lea edx,CONTEXT.regEip[edx]	; IRET-frame.
+	assume edx:PIRET_FRAME
+	.if Zero?
+		push [edx].rEip
+		pop dword ptr [ecx + 4*4]
+	.else
+		inc [edx].rEip
+	.endif
+	btr [edx].rEFlags,8	; !EFLAGS_TF
+	xor eax,eax
+	retn 4*4
+ @@:
+	push dword ptr fs:[eax]	; TEB.Tib.ExceptionList
+	mov dword ptr fs:[eax],esp
+	push EFLAGS_TF or EFLAGS_IF or EFLAGS_MASK
+	popfd
+	cli
+ kitrap_safe:
+	pop dword ptr fs:[eax]
+	lea esp,[esp + 2*4]
+	pop ebp
+	pop eax
+ endm
+
+ 33 C0 50 55 E8 02 00 00 00 EB 3F E8 2D 00 00 00 8B 44 24 04 8B 4C 24 08 8B 54 24 0C 81 38 04 00 00 80 8D 
+ 92 B8 00 00 00 75 07 FF 32 8F 41 10 EB 02 FF 02 0F BA 72 08 08 33 C0 C2 10 00 64 FF 30 64 89 20 68 02 03 
+ 00 00 9D FA 64 8F 00 8D 64 24 08 5D 58
+-
+LDE(*Upd):
+ > http://indy-vx.narod.ru/Bin/LDE.zip
+-
+Сохранение контекста.
+ Идеально подходит NtUserMessageCall(FNID_SENDMESSAGECALLBACK). ID сервиса определяет на основе алфавитно
+ й закономерности, следующее имя сервиса NtUserMenuItemFromPoint. Стаб для него экспортируется как MenuIt
+ emFromPoint(). Таким образом ID(NtUserMessageCall) = ID(NtUserMenuItemFromPoint) + 1:
+  > http://j00ru.vexillium.org/win32k_syscalls/
+  > http://doxygen.reactos.org/da/d50/subsystems_2win32_2win32k_2ntuser_2message_8c_source.html#l02036
+ Нельзя выполнять возврат из колбека простой загрузкой стека. Необходимо выполнить S-маршрутизацию для фр
+ ейма с дресом возврата в KiUserCallbackDispatcher() + NL(dSFN). Это приведёт к освобождению ресурсов и о
+ ткату SEH(так как откатываются все функции, до вызова NtCallbackReturn). 
+-
+Эмуляция TLS.
+ Барьер - механизм, позволяющий отследить изменение отслеживаемого обьекта, которое приведёт к снятию мех
+ анизма отслеживания изменений. Например описанное отлеживание изменения RtlpCalloutEntryList для фиксиро
+ вания описателя VEH в начале списка обработчиков это барьер. Перед доставкой TLS-нотифи(в LdrpCallTlsIni
+ tializers()) активируется контекст активации в RtlActivateActivationContextUnsafeFast().Функция LdrpCall
+ TlsInitializers() начинается с определения директории TLS в RtlImageDirectoryEntryToData(). Отслеживание 
+ активации контекста активации является универсальным способом отследить все вызовы LdrpCallTlsInitialize
+ rs(). Тогда получив управление при активации можно будет выполнить машрутизацию и эмулировать директорию 
+ TLS. Так как ссылка(TEB.ACTIVATION_CONTEXT_STACK.ActiveFrame:PRTL_ACTIVATION_CONTEXT_STACK_FRAME) на тек
+ ущий фрейм изменяется, то следует использовать барьер.
+-
+Открывается rootkits.su/forum/
+-
+Проверка памяти на доступность(4R) без фолтов.
+	xor ebx,ebx
+ @@:
+	mov edx,MM_SHARED_USER_DATA_VA + X86_PAGE_SIZE - sizeof(HANDLE)	; 0x7FFE0FFC
+	mov eax,ebx
+	Int 2eh
+	cmp al,8
+	je @f
+	inc ebx
+	bt ebx,10
+	jnc @b
+	;.. Fail
+ @@:
+	mov edx,ProbeAddress4R
+	mov eax,ebx
+	Int 2eh
+	cmp al,5
+	je  NoAccess
+-
+OUTEFLAGS():
+ > http://indy-vx.narod.ru/Bin/OUTF.zip
+-
+UserpActivateDebugger.
+ Сервис порта \ApiPort(4-я подсистема, USERSRV_SERVERDLL_INDEX):
+  > http://j00ru.vexillium.org/csrss_list/api_list.html
+ Вызывается из Win32k!xxxActivateDebugger() при обработке хоткея. Это заглушка для DbgUiIssueRemoteBreaki
+ n(). Последняя создает удалённый поток на DbgUiRemoteBreakin(). Для успешного вызова сервиса вызывающий 
+ его тред должен быть зарегистрирован(CsrInsertThread()), иначе CsrLocateThreadByClientId() завершиться с 
+ ошибкой и будет возвращён STATUS_ILLEGAL_FUNCTION. Поток регистрируется посредством сервиса BasepCreateT
+ hread. Пользовательский поток регистрируется при его создании, нэйтивный(RtlCreateUserThread()) не регис
+ трируется. Необходимо выполнить запрос в контексте зарегистрированного потока, либо зарегистрировать его.
+ Индекс для UserpActivateDebugger отличается в W7(3) от остальных версий(4), также изменена структура ACT
+ IVATEDEBUGGERMSG:
+   CLIENT_ID ClientId;           HANDLE ProcessHandle;
+   HANDLE ProcessHandle;         HANDLE ThreadId; 
+ В ядре можно открыть порт по имени, либо использовать порт исключений.
+-
+Klif race condition(PAGE_GUARD).
+ Service                      Arg*4+4                  Size                          Size
+ NtOpenProcess                0x14                     sizeof(CLIENT_ID)             0x8
+ NtCreateThread               0x1C                     sizeof(CONTEXT)               0x2CC
+ NtAdjustPrivilegesToken      0x10                     sizeof(PTOKEN_PRIVILEGES)     0x10
+ NtWriteVirtualMemory         0x10                     Length                        4th
+ NtLoadDriver                 0x8                      sizeof(PUNICODE_STRING)       0x4
+                             |UNICODE_STRING.Buffer    UNICODE_STRING.Length
+ NtSetSystemInformation       0xC                      sizeof(PUNICODE_STRING)       0x4 ; Class = 0x26
+                             |UNICODE_STRING.Buffer    UNICODE_STRING.Length
+ NtDeviceIoControlFile        0x20                     InputBufferLength             8th ; \Device\Afd
+ NtSetContextThread           0xC                      sizeof(CONTEXT)               0x2CC
+ NtOpenSection                0x10                     sizeof(OBJECT_ATTRIBUTES)     0x18 ; ?
+ NtCreateFile                 0x10                     sizeof(OBJECT_ATTRIBUTES)     0x18
+                             |UNICODE_STRING.Buffer    UNICODE_STRING.Length
+ NtOpenFile                   0x10                     sizeof(OBJECT_ATTRIBUTES)     0x18
+                             |UNICODE_STRING.Buffer    UNICODE_STRING.Length
+ NtReplyPort                  0xC                      sizeof(OBJECT_ATTRIBUTES)     0x18
+ NtReplyWaitReceivePort       0x10                     sizeof(PORT_MESSAGE)          0x18
+                             &0x14                     sizeof(PORT_MESSAGE)          0x18
+ 
+ o Автоматический обход для произвольной апи:
+ 
+   CONTEXT.rEFlags.TF = 1
+   API()
+Breaker:
+   ...
+	
+XcptHandler():
+   if XcptCode = STATUS_SINGLE_STEP
+      if XcptAddress ~ [KiUserExceptionDispatcher, MAX_INSTRUCTION_LENGTH]
+         !CONTEXT.TF	; to avoid deadlock.
+         Continue()
+      fi
+      if Table{XcptAddress}
+         CONTEXT.rEip = @Stub
+         Continue()
+      fi
+      if XcptAddress = @Breaker
+         !CONTEXT.rEFlags.TF
+         Continue
+      fi
+   fi
+	
+Stub():
+   if OPCODE(XcptAddress + 0xC) = OPCODE("Ret n")
+      Args = WORD[XcptAddress + 0xD]
+   else
+      Continue()
+   fi
+   NewStack = (CONTEXT.rEsp - PAGE_SIZE) & NOT(PAGE_SIZE) - Args + 4
+   OldStack = CONTEXT.rEsp
+   MemCopy(CONTEXT.rEsp + 4, NewStack, Args/4)
+   StackBase = TIB.StackBase
+   ProtectVM(CONTEXT.rEsp, StackBase, |PAGE_GUARD)
+   CONTEXT.rEsp = NewStack
+   !TIB.StackBase	; ignore stack faults.
+   Ti = Table{XcptAddress}
+   ProtectVM(CONTEXT.rEsp + Table{Ti}.Disp - 2*4, Table{Ti}.Size, |PAGE_GUARD)
+   Table{Ti}.Address()
+   ProtectVM(CONTEXT.rEsp + Table{Ti}.Disp - 2*4, Table{Ti}.Size, !PAGE_GUARD)
+   CONTEXT.rEsp = OldStack
+   TIB.StackBase = StackBase
+   Ret
+
+Table{@NtOpenProcess, 0x14, 0x8...}
+-
+Мониторинг критических секций.
+ Если на кс есть ссылка в переменной, то отслеживать обращения можно с помощью IDP, это не приводит к рас
+ синхронизации:
+  > http://indy-vx.narod.ru/DLab/HMGRxIDP.zip
+ Если адрес кс жёстко зашит, то возникают трудности. Решения могут быть следующие:
+ o Если кс захвачена другим тредом, то поток входит в ожидание евента в RtlpWaitForCriticalSection() -> 
+    ZwWaitForSingleObject()/ZwWaitForKeyedEvent(). Если описатель евента инвалидный и включена трассировк
+    а описателей(Handle Tracing), то вызывается KiRaiseUserExceptionDispatcher(), который генерирует #STA
+    TUS_INVALID_HANDLE. VEH должен эмулировать инструкции leave и ret, что приведёт к возврату в стаб.
+ o При инвалидном описателе евента будет сгенерирован #STATUS_INVALID_HANDLE, даже если трассировка описа
+   телей выключена.
+ o Можно указать таймаут ожидания, который находится в переменной RtlpTimeout, но прежде ожидание должно 
+   быть разрешено сбросом переменной RtlpTimoutDisable, которая по дефолту установлена в TRUE. Если кс за
+   хвачена другим тредом, то поток войдёт в ожидание на эвенте, при таймауте сервис вернёт  STATUS_TIMEOU
+   T, будут выведены отладочные сообщения, после чего в зависимости от некоторых условий(повторное ожидан
+   ие, тип подсистемы и пр.) будет выполнен отладочный останов, либо генерация #STATUS_POSSIBLE_DEADLOCK. 
+   Можно запустить повторное ожидание, либо передать иными способами управление на адрес возврата из стаб
+   а(Zw*).
+ o Первое поле в RTL_CRITICAL_SECTION это ссылка на отладочную информацию(список кс, бактрейс и пр.). Это
+   т блок можно захватить через IDP, но в таком случае кс должна быть захвачена другим тредом. Возврат из 
+   стаба со STATUS_SUCCESS приведёт к возврату из RtlpWaitForCriticalSection() и дальнейшему захвату теку
+   щим тредом кс. Рекурсивный вызов не будет отслежен. Все способы требуют, чтобы кс была захвачены други
+   м тредом. Так как евент общий для всех потоков, то при сигнализации его, все ждущие треды вернуться из 
+   стаба и первый тред, покинувший стаб, захватит кс. Остальные треды вновь начнут ожидание. Можно выполн
+   ить маршрутизацию(S/W), заменив TID, чтобы рекурсивный вход в кс не был пропущен. Если поле TID было и
+   зменено после возврата из RtlEnterCriticalSection(), то после рекурсивного входа в кс возникнет деадло
+   к. В RtlLeaveCriticalSection() нет проверки TID(поле обнуляется). Псевдокод будет следующим:
+
+Initialize:
+   SectionCopy = CS	; Копия кс.
+   ; Инвалидный описатель, отличный от нуля. Нулевой описатель приведёт к созданию евента и апдейту этого по
+   ; ля. При ожидании на этом описателе будет сгенерирован #STATUS_OBJECT_TYPE_MISMATCH/#STATUS_INVALID_HAND
+   ; LE в RtlpWaitForCriticalSection().
+   CS.LockSemaphore = MAGIC
+   !CS.LockCount	; Захватываем кс. Тред входит в ожидание если LockCount & !CurrentThread.
+   CS.RecursionCount = 1	; Для RtlLeaveCriticalSection().
+   CS.OwningThread = NULL
+   ; В RtlEnterCriticalSection() нет проверки на ноль, это поле обнуляется до вызова RtlpUnWaitCriticalSecti
+   ; on() -> ZwSetEventBoostPriority()/ZwReleaseKeyedEvent().
+   ...
+
+XcptHandler:
+   if XCPT_CODE = #STATUS_OBJECT_TYPE_MISMATCH/#STATUS_INVALID_HANDLE
+      if (Ip ~ RtlpWaitForCriticalSection()) or (Ip ~ RtlpUnWaitCriticalSection())
+         ; Откатываем функцию и повторно вызываем её с валидной кс.
+         Leave(NL = 2)	; Эмулируем возврат из RtlEnterCriticalSection()/RtlLeaveCriticalSection().
+         PUSH(@SectionCopy) 
+         CONTEXT.rEip = @RtlEnterCriticalSection()
+         !CS.LockCount
+         CS.RecursionCount = 1
+         Continue()
+      fi
+   fi
+   
+ > http://indy-vx.narod.ru/Bin/SynchLock.zip
+-
+ VdmSetInt21Handler.
+  > http://indy-vx.narod.ru/Bin/v86.zip
+-
+RIT APC.
+ В шадове обработка ввода от клавиатуры и мыши начинается в InputApc(), доставляемой асинхронно. Тут вызы
+ ваются базовые диспетчеры ProcessKeyboardInput() и ProcessMouseInput(). APC завершается рекурсивно в Sta
+ rtDeviceRead() -> NtReadFile(*InputApc). Диспетчеры описаны в описателях устройст ввода, это массив стру
+ ктур DEVICE_TEMPLATE(userk.h & ntinput.c) которые содержат ссылки на диспетчеры. Сами описатели располож
+ ены в секции данных Win32k. Оба диспетчера получают на вход структуру DEVICEINFO с сырым потоком данных.
+ Установка кейлоггера заключается в загрузке ссылок на свои диспетчеры(необходимая инфа для реализации в 
+ DDK: ntddmou.h & ntddkbd.h). Переменная aDeviceTemplate может быть найдена через содержащиеся в ней ссыл
+ ки, например на GUID: GUID_DEVINTERFACE_KEYBOARD/GUID_DEVINTERFACE_MOUSE. 
+-
+Сигнатурный поиск NtProtectVirtualMemory.
+ > http://indy-vx.narod.ru/Bin/Id.zip
+-
+SwitchThread():
+   !Frame  
+   Bp = CONTEXT(Ebp)
+   Ip = CONTEXT(Eip)
+   if !NL
+      Gp = GpCheckIpBelongToGraph(Ip)
+      if !Gp: End
+      Switch(Ip)
+   fi
+   Do
+      if !ValidFrame(Bp): End
+      Gp = GpCheckIpBelongToGraph(STACK_FRAME.Ip[Bp])
+      if Gp
+         if !Frame: Frame = Bp	; mb last..
+         NL = NL - 1
+         if !NL
+            if GpCheckIpBelongToGraph(Ip)
+               Switch(Ip)	; CONTEXT.Eip -> Gp.Address
+            else
+               Route(Frame)	; STACK_FRAME.Ip -> Gp.Address
+            fi
+         fi
+         Bp = STACK_FRAME.Next[Bp]
+      else
+         if Frame: End
+      fi
+   Loop
+-
+Определение ID сервиса на основе контекста.
+ > http://kitrap08.blogspot.com/2011/02/id.html
+
+   Bp = CONTEXT(Ebp)
+   Do
+      PUSH(Bp)
+      if [Bp + 2*4] =  0xBADB0D00	; Trap frame.
+         Exit Do
+      fi
+      Bp = [Bp]	; STACK_FRAME.Next
+   Loop EOF(Bp)	; End of frame.
+   Do
+      Bp = POP()
+      Ip = [Bp + 4]	; STACK_FRAME.Ip
+      if ([Ip + 10] or [Ip + 7]) = OPCODE("Call _SEH_prolog")
+         Sp = [Bp - 4*6]
+         ; Edi = [Sp]
+         ; Esi = [Sp + 4]
+         ; Ebx = [Sp + 2*4]
+         pNt = [Sp + 2*4]
+         Id = (Find(SDT.SST.ServiceTable, pNT))/4
+         End
+      fi
+   Loop EOL()	; End of list.
+-
+Исправлена ошибка в GCBE.
+ > http://indy-vx.narod.ru/Bin/GCBE.zip
+-
+Отладка посредством порта ислючений.
+ o При создании процесса выполняется нотификация csrss, поток(CsrApiRequestThread()) обрабатывающий запро
+   сы с сервисного порта(\ApiPort) вызывает CsrCreateProcess(), в этой функции помимо иной работы устанав
+   ливается порт ислючений(ProcessExceptionPort). Установка порта может быть выполнена однократно, если у
+   становить порт передав его описатель в NtCreateProcess, то предыдущая функция вернёт STATUS_PORT_ALREA
+   DY_SET, сервер возвратит STATUS_NO_MEMORY. Далее CreateProcess() завершится с ошибкой. Если не выполня
+   ть нотификацию, то при инициализации процесса при подключении к серверу из процедуры инициализации Ker
+   nel32(в CsrpConnectToServer() -> NtSecureConnectPort) будет возвращена ошибка(CsrApiHandleConnectionRe
+   quest() не найдёт описатель потока в базе, который добавляется туда при инициализации и сервер отклони
+   т запрос на соединение возвратив STATUS_PORT_CONNECTION_REFUSED), загрузчик выведет сообщение и сгенер
+   ирует исключение.
+ o Не целевые(LPC_EXCEPTION) сообщения следует передавать на сервер.
+ Эти проблемы решаются захватом CsrApiRequestThread(). Это решит предыдущие проблемы и позволит выполнять 
+ глобальную обработку сообщений. Управлять надстройкой можно также через сервисный порт.
+-
+Переключение потока на отморфленный код.
+ Отложенные вызовы кода реализуются перемещением исходного кода в буфер, где он изменяется и на него пере
+ даётся управление. Таким образом сохраняется часть функционала до передачи управления на целевое место. 
+ При перемещении кода посредством морфинга некоторые инструкции будут отсутствовать в графе, это например 
+ удалённые оптимизатором ветвлений. Эта проблема возникает например при захвате RIT(поток сырого ввода).
+ Функция win32k!RawInputThread() циклически принимает и обрабатывает данные от устройст ввода. Эта функци
+ я может быть отморфлена в буфер, далее потоки csrss перечислены и Ip каждого треда проверен на принадлеж
+ ность графу. Таким образом будет найден RIT(незачем искать gptiRit). В его контексте Ip заменяется на ад
+ рес тойже инструкции(блока) в буфере с отморфленным кодом, далее тред будет исполнять код в буфере. Суще
+ ствуе вероятность останова потока на ветвлении, которого нет в графе, так как оно было удалена оптимизат
+ ором. Это приводит к необходимости эмуляции ветвлений - если оно не определено в графе, то должна выполн
+ яться поправка Ip в зависимости от соответствующих флагов. Другим способом может быть вставка описателя 
+ инструкции Nop в граф перед сборкой.
+-
+Скрытие кода от динамических детекторов.
+ В динамике детект выполняется посредством перехвата управления в шедулере, ISR и прочих функций выполняю
+ щих трап-процессинг. Детектор извлекает Ip непосредственно из трап-фрейма. При этом база сегмента кода н
+ е проверяется, что позволяет сместить сегмент. Если 0:[Body] ~ Nt, то детектор обнаружит что код находит
+ ся в пределах ядра или иного системного модуля, но реально он будет находится по Base:[Body], где Base = 
+ 0:[Body] - 0:[Nt]. Трап-процессинг не должен вызвать проблем, так как проверяется/изменяется только поль
+ зовательский кодовый селектор. При планировании шедулер загружает KGDT_LDT в LDTR, дескриптор в GDT загр
+ ужается из KPROCESS.LdtDescriptor и настраивается 0x21 шлюз в IDT. Для установки LDT прерывание 0x2A(KiG
+ etTickCount) не подходит, так как проверяется CPL и запрос на установку LDT будет отклонён на нулевом CP
+ L(проверку можно обойти отморфив ISR). Но ISR подходит для извлечения ссылки на NtSetLdtEntries().
+-
+Shadow sandbox.
+ Шадов поддерживает механизм изоляции задач. При запущенном механизме для менее привилегированных процесс
+ ов будет выполнятся ограничение доступа, например не будет работать аттач, доставка сообщений, установка 
+ хуков, буфер обмена и пр. В основе лежит функция Win32k!AllowAccessUISandbox(), проверяющая права доступ
+ а к процессу. Механизм начинает работать если установлена в TRUE переменная bEnforceUISandbox. Тогда есл
+ и значение PROCESSINFO(PsGetProcessWin32Process())[0x194(XP)] текущего процесса меньше целевого, то дост
+ уп блокируется. Переменная bEnforceUISandbox загружается при запуске ядра из ключа HKLM\SOFTWARE\Microso
+ ft\Windows NT\CurrentVersion\Windows\EnforceUISandbox в функции Win32UserInitialize(). Переменная PROCES
+ SINFO[0x194] инициализируется в W32pProcessCallout -> xxxUserProcessCallout -> xxxInitProcessInfo, по ум
+ олчанию в 5. До конца механизм не ясен.
+-
+Защита стека(PoC).
+ > http://indy-vx.narod.ru/Bin/Stpt.zip
+ В качестве стаба используется CsrServerApiRoutine.
+-
+Защита SEH.
+ Описанный механизм защиты SFC не полноценный, если не выполнять защиту SEH. Детектор может выполнить ана
+ логичный детект по цепочке сех фреймов, содержащих ссылки на хэндлеры. Сех должен находится в пределах м
+ одуля, иначе раскрутка не будет выполнена. Оптимальный вариант это использование того же механизма, что 
+ и при защите SFC. Сех должен являться стабом расположенном в системном модуле. Этот стаб должен передать 
+ управление на переходник, который извлекёт ссылку на текущий оригинальный сех и вызовет его. Это требует 
+ изменения организации сех фреймов. Вместо ссылки на оригинальный сех должна лежать ссылка в стаб, а допо
+ лнительная информация в фрейме должна содержать зашифрованную ссылку на оригинальный сех(также и на безо
+ пасное место), которую расшифрует стаб. Этим достигается локализация сех. Тогда цепочка фреймов останетс
+ я связанной(будет выполняться системная раскрутка), но не имеющей ссылок в скрываемый код. Детект по кол
+ стеку может быть выполнен не только чтением ссылки на голову списка, но и восстановлением списка посредс
+ твом анализа стека и поиска в нём ссылок на фреймы(так например поступает Olly). Дабы избежать этого мож
+ но отказаться вообще от связывания фреймов, либо шифровать список перед вызовом апи. Если список шифрует
+ ся перед вызовом возникает необходимость расшифровки при возникновении фолтов. Это может быть реализован
+ о из сех. В совокупности два эти механизма сделают не возможным обнаружение вызывающего кода. Существует 
+ возможность обнаружения по адресу фолта. По этой причине вероятность возникновения исключений в скрываем
+ ом коде должна быть минимальной, а для валидации ссылок использоваться внешние апи, которые защищены сех.
+ Поиск необходимого стаба является проблемным. Он должен являться калбэком, линк на который находится в п
+ еременной не затрагиваемой детектором. Причём модель вызова калбэка не должна зависеть от контекста. Нап
+ ример не интересный детекторам нотификатор MmPageFaultNotifyRoutine не может использоваться в стабе, так 
+ как перед его вызовом выполняется проверка статуса в стеке, а он не определён, так как фолт может возник
+ нуть в любой момент. Использование нотификаторов типа PsCallImageNotifyRoutines и подобных недопустимо, 
+ так как любой детектор их использует. Возможно использование таблиц HalPrivateDispatchTable/HalDispatchT
+ able, содержащих заглушки KeSetIntervalProfile, KeQueryIntervalProfile, KiConnectVectorAndInterruptObjec
+ t и пр. Но это часто используется при различных эскалациях(Сантамарта(> www.reversemode.com) и пр.) и вп
+ олне вероятно что может выполняться валидация этих таблиц. Подходящими стабами являются теже функции, чт
+ о и при захвате багчеков(InbvDisplayFilter etc.). 
+-
+Защита SFC.
+ Для обнаружения скрытого кода может использоваться анализ SFC. Это позволит обнаружить вызывающий код на
+ основе информации содержащейся в стеке. Таже технология позволяет обнаруживать ядерные AV-пехватчики. Во
+ прос был затронут тут http://d-olex.blogspot.com/2010/12/blog-post.html
+ Можно использовать проецирование оригинального модуля с диска и релокацию только кодосекций(таким образо
+ м будут использоваться текущие переменные). Это позволит обойти снятие лога детектором, но способ не уни
+ версальный. Необходимо выполнять инвалидацию SFC перед передачей управления за пределы своего кода, разб
+ ив последний стековый фрейм: линк на следующий фрейм сделать инвалидным(загрузить маркер конца цепочки) 
+ и изменить адрес возврата, загрузив ссылку на стаб, который должен находиться в пределах секции кода как
+ ого либо модуля. Стаб не должен брать адрес возврата со дна стека. Желательно использовать адресацию чер
+ ез регистры или переменные(нормально апи сохраняют часть контекста, через которую может быть передана сс
+ ылка, например Call [Ebx]). В более сложном варианте оригинальный адрес возврата должен быть зашифрован, 
+ а стаб должен расшифровать его и передать управление.
+ В качестве стаба может использоваться код, вызывающий функцию RtlpExecuteHandlerForException():
+  RtlpExecuteHandlerForException (
+     IN PEXCEPTION_RECORD ExceptionRecord,
+     IN PVOID EstablisherFrame,
+     IN OUT PCONTEXT ContextRecord,
+     IN OUT PVOID DispatcherContext,
+     IN PEXCEPTION_ROUTINE ExceptionRoutine
+     );
+ Последний аргумент является ссылкой на калбэк(сех), он загружается из структуры EXCEPTION_REGISTRATION_R
+ ECORD(в скрипте RegistrationPointer->Handler), адресуемой регистром Ebx(+4):
+	push dword ptr [ebx + 4]	; EXCEPTION_REGISTRATION_RECORD.Handler[ebx]
+	lea eax,dword ptr ss:[ebp-14]	; DispatcherContext etc.
+	push eax
+	push dword ptr ss:[ebp + 3*4]
+	push ebx
+	push esi
+	call RtlpExecuteHandlerForException
+ Необходимый код находится в RtlDispatchException(). В UM линк находится из KiUserExceptionDispatcher(), 
+ в KM из ExRaiseException()/ExRaiseStatus(). При этом теряется статус(Eax).
+ 
+ При окончании инициализации процесса вызывается калбэк определённый в PEB.PostProcessInitRoutine:
+  LdrpInitializeProcess:
+     ...
+  ApiPreStub:
+     if ( NT_SUCCESS(st) && Peb->PostProcessInitRoutine ) {
+        (Peb->PostProcessInitRoutine)();
+     }
+ Если использовать его как стаб, то вызов приемлим, так как сохраняется регистр Eax. Псевдокод следующий:
+  ; Eax: @Api
+  ApiCallStub:
+     POP(TLS.Caller)
+     TLS.rEbx = Ebx
+     TLS.rEdi = Edi
+     TLS.rEbp = Ebp
+     PEB.PostProcessInitRoutine = @ApiPostStub	; 0x14C
+     Edi = 0
+     Ebp = EXCEPTION_CHAIN_END	; -1
+     Ebx = @PEB
+     PUSH(@ApiPreStub)
+     Eip = Eax	; jmp eax
+
+  ApiPostStub:
+     Esp = Esp + 4
+     Ebx = TLS.rEbx
+     Edi = TLS.rEdi
+     Ebp = TLS.rEbp
+     Eip = TLS.Caller
+-
+Логгирование SFC.
+ Системный логгер инициализируется функцией RtlInitializeStackTraceDataBase(). Если в конфиге указан флаг 
+ FLG_USER_STACK_TRACE_DB инициализация логгера выполняется автоматически при запуске процесса. При этом р
+ азмер лога определяет параметр "StackTraceDatabaseSizeInMb". Бактрейс и логгирование выполняет RtlLogSta
+ ckBackTrace(). Лог может быть считан посредством RtlQueryProcessBackTraceInformation/RtlQueryProcessDebu
+ gInformation. Обычно системное логгирование выполняет Dph-провайдер(см. UMDH) и менеджер хипа. Для включ
+ ения логгирования менеджером хипа в описатиле хипа должен быть установлен флаг HEAP_CAPTURE_STACK_BACKTR
+ ACES. Динамически можно изменять флаги посредством RtlSetUserFlagsHeap(). Для системного хипа можно изме
+ нять флажки вручную(HEAP.Flags[PEB.ProcessHeap]). Так как RTL активно использует хип, то это позволяет в
+ ести лог во многих сторонних механизмах, например в загрузчике.
+-
+Генерация Gs-серий(без оптимизации).
+  > http://indy-vx.narod.ru/Bin/Gs.zip
+-
+Интеграция кодов.
+ Интеграция - объединение двух кодов в один, причём работоспособность их сохраняется по отдельности. Два 
+ графа объединяются в один, но каждый поток инструкций в графе исполняет свою изначальную задачу. Эту изо
+ ляцию позволяет исполнить разделение среды(контекста и вообще окружения). Уровень этого разделения среды 
+ определяет степень интеграции. Переключения на другую задачу, реализуемую интегрируемым кодом считаются 
+ не эффективными и такой способ имеет уровень интеграции. Это всевозможные способы передачи управления на 
+ стаб переключающий среду(окружение) и запускающий вторую задачу. Например процедурные ветвления на стаб, 
+ выполненные в виде вставок в первый граф, точки останова и тп. Более эффективны вставки в виде макро, но 
+ всё также переключающие окружение. Это например сохранение части окружения и загрузка нового(флажки, сме
+ на стека и пр.). Совершенно иным способом изоляции задач является виртуализация. При этом вторая задача 
+ не описана машинным кодом, а является p-кодом. Интегрируемый код является виртуальной машиной(интерпрета
+ тором). Это позволяет использовать меньший объём переключаемого окружения, тоесть интеграция на уровне и
+ нструкций проще(например внедрение инструкций из первой задачи в блок второй не содержащий далее инструк
+ ций зависящих от флагов, загрузка регистров сведётся к паре push/pop и тп). Псевдокод позволяет использо
+ вать динамическую генерацию графа без перестановки регистров и морфинга исходного кода при интеграции. О
+ сновной проблемой является разрыв первого кода(прерывание задачи), как например исключения.
+-
+Псевдокод генерации Gs-серий(одна инструкция):
+   !Mode, !NewSeg, !Lock
+   PfxLength = QueryPfxLength(Ip)
+      if PfxLength
+         Mode = Query66Pfx(Ip)
+         NewSeg = QuerySegPfx(Ip)
+         Lock = QueryLockPfx(Ip)
+      fi
+   if NewSeg = CS
+      > End
+   fi
+   OverSeg = SDE(Ip + PfxLength, Mode)
+   if !OverSeg
+      > End
+   fi
+   InsLength = LDE(Ip + PfxLength)
+   if Lock
+      NewPfxLength = NewPfxLength + 1
+   fi
+   if Mode
+      NewPfxLength = NewPfxLength + 1
+   fi
+   if (InsLength + NewPfxLength + 1) > 15
+      > End
+   fi
+   ; - Линейная вставка в граф. -
+   BYTE(Ip') = OPCODE('push seg', NewSeg)
+   BYTE(Ip' + 1) = OPCODE('pop gs')
+   ; -                          -
+   BYTE(Ip' + 2) = 0x65	; Gs-pfx.
+   if Lock
+      BYTE(Ip' + 3) = 0xF0	; Lock-pfx.
+   fi
+   if Mode
+      BYTE(Ip' + 4) = 0x66	; Mode-pfx.
+   fi
+   CopyMem(Ip, Ip' + 5, InsLength)
+-
+Движок для определения переопределяемых сегментов(базовый набор, не включая FPU и иные блоки).
+ Необходим для замены сегментов, например при генерации Gs-серий.
+ > http://indy-vx.narod.ru/Bin/SDE.zip
+-
+GCBE GenerateNopSeries():
+
+ o GCBE_PARSE_SEPARATE
+   GpNop = GpLimit + sizeof(Gp)
+   for Gp = GpBase to GpLimit
+      if Gp.Type = TYPE_LINE
+         if Gp.Length < MAX_IP_LENGTH
+            GpNop:[TYPE:Line, ADDR:@Nop, LENGTH:Rand(MAX_IP_LENGTH - Gp.Length)]
+            if Gp.Blink
+               Gp.Blink.Flink = @GpNop
+            fi
+            Gp.Blink = @Gp
+            GpNop.Flink = @Gp
+            GpNop.Blink = Gp.Blink
+            RedirectAllBranchLinks(@Gp, @GpNop)
+            GpNop = GpNop + sizeof(Gp)
+         fi
+      fi
+   Next
+-
+Апдейт GPE до GCBE. Включен оптимизатор, Jcx-морфер и билдер.
+ > http://indy-vx.narod.ru/Bin/GCBE.zip
+
+ Решение задачи перехвата ISR при возврате: морфить ISR с нулевым NL. Для #DB нужна поправка смещений.
+ > http://indy-vx.narod.ru/Bin/Ki.zip
+-
+Псевдокод очистки GP-графа от паразитных ветвлений.
+
+Restart:
+   for Gp = GpBase to GpLimit
+   if Gp.Type = JXX
+      if Gp.Flags & BRANCH_DEFINED_FLAG
+         if Gp.BranchLink = @Gp + SIZE(Gp)
+            ; Jxx $'
+            > Unlink
+         else
+            Gp2 = Gp.BranchLink
+            if Gp2.Type = JXX
+               ; Jxx -> Jxx
+               if Gp2.Flags & BRANCH_DEFINED_FLAG
+                  > Idle
+               else
+                  Gp[] = Gp2[]
+                  if !Gp2.Blink	; Idle
+                     MarkIdle(Gp2)
+                     SubstituteAllJxx(Gp2)
+                  fi
+               fi
+               > Restart
+            fi
+         fi
+      fi
+   elseif Gp.Type = JCC
+      if Gp.BranchLink = @Gp + SIZE(Gp)
+         if Gp.Flags & BRANCH_CX_FLAG
+            if Gp.JccType = JCC_ECXZ
+               ; Jcxz $'
+               ; Jecxz $'
+ Unlink:
+               if Gp.Blink
+                  Gp.Blink.Flink = Gp.BranchLink
+               fi
+               if GpFlink
+                  Gp.Flink.Blink = Gp.BranchLink
+               fi
+               RedirectAllBranchLinks(Gp, Gp.BranchLink)
+               MarkIdle(Gp)
+               > Restart
+            fi
+         else
+            ; Jcc $'
+            > Unlink
+         fi
+      else
+ Self:       
+         Gp2 = Gp.BranchLink
+         if Gp2.Type = JXX
+            ; Jcc -> Jxx
+            if Gp2.Flags & BRANCH_DEFINED_FLAG
+ Idle:
+               Gp.BranchLink = Gp2.BranchLink
+               if !Gp2.Blink	; Idle
+                  MarkIdle(Gp2)
+                  RedirectAllBranchLinks(Gp2, Gp2.BranchLink)
+               fi
+               > Restart
+            fi
+         fi
+      fi
+   elseif Gp.Type = CALL
+      if Gp.Flags & BRANCH_DEFINED_FLAG
+         if Gp.Flags & DISCLOSURE_CALL_FLAG
+            ; Call -> Jxx
+            > Self
+         fi
+      fi
+   fi
+   next
+-
+Поиск MmPageFaultNotifyRoutine средствами GPE.
+
+MmAccessFault (
+    IN ULONG_PTR FaultStatus,
+    IN PVOID VirtualAddress,
+    IN KPROCESSOR_MODE PreviousMode,
+    IN PVOID TrapInformation
+    )
+   ...
+   if (Status != STATUS_SUCCESS) {
+      NotifyRoutine = MmPageFaultNotifyRoutine;
+      if (NotifyRoutine) {
+         (*NotifyRoutine) (status, VirtualAddress, TrapInformation);
+      }
+   }
+return Status;
+
+ o ref. KiTrap0E(), NL = 1
+PARSE_CALLBACK_ROUTINE(GE:PGRAPH_ENTRY, CallList:PCALL_ENTRY, NL:ULONG):
+   if (GE.Type = TYPE_LINE) && (GE.Flink = NULL) && (NL = 1)
+      RE = CallList[0]
+      RE = RE.Blink
+      if (RE.Type = TYPE_LINE) && (StackBalance(RE.Address) = 4*4)	; MmAccessFault@10
+         GE = GE.Blink
+         if GE.Type = TYPE_JXX
+            RE = GE.Blink
+            if OPCODE(RE.Address) = (test Reg32,Reg32)
+               RE = GE.Blink
+               if RE.Type = TYPE_LINE
+                  if OPCODE(RE.Address) = (mov Reg32,dword ptr [MmPageFaultNotifyRoutine])
+                     GE = GE.BranchLink
+                     GE = GE.Flink
+                     GE = GE.Flink
+                     GE = GE.Flink
+                     if GE.Type = TYPE_CALL
+                     if OPCODE(GE.Address) = (Call Reg32)
+                        pMmPageFaultNotifyRoutine = DWORD[RE.Address + 1]
+-
+NX SEH(раскрутка цепочки сех вне модулей).
+ В UM установить флажёк MEM_EXECUTE_OPTION_EXECUTE_DISPATCH_ENABLE не удастся изза установленного флажка 
+ MEM_EXECUTE_OPTION_PERMANENT. В KM эти опции не используются. Возможные способы:
+  o Загрузка системного модуля без его инициализации и обнулением директории исключений и таблицы хэндлер
+    ов в директории конфигурации модуля. Код помещается в секцию данных этого модуля и устанавливается ат
+    рибут E для секции(региона).
+  o Раскрутка сех вручную. В UM посредством VEH. В KM посредством KD(ставит жёсткие ограничения), багчеко
+    в(приват) или любого иного подходящего механизма. Это требует использование графа для проверки вхожде
+    ния Ip в защищаемый код описываемый графом.
+  o Динамическое копирование процедур в место в пределах модуля. Также требует пересборку графа для произ
+    вольной реализации защищаемого кода.
+  o В UM трассировка диспетчера исключений в VEH до входа в сервис NtQueryInformationProcess(ProcessExecu
+    teFlags) и установка флажка MEM_EXECUTE_OPTION_EXECUTE_DISPATCH_ENABLE.
+-
+Апдейт GPE.
+ o Ведётся список процедур.
+ o Вычисляется NL.
+ o Выполняется последовательный разбор ветви.
+-
+GPE официальный релиз.
+ > http://indy-vx.narod.ru/Bin/GPE.zip
+-
+Пример использования дизассемблера длин шима(Shim):
+ o В младших версиях системы используется UEF вместо VEH.
+ o Быстрый вызов без генерации исключений.
+
+Local ContextRecord:CONTEXT
+Local ExceptionRecord:EXCEPTION_RECORD
+Local ExceptionPointers:EXCEPTION_POINTERS
+;	- Load & Init -
+	Call @f
+	CHAR "D:\Windows\AppPatch\AcLayers.dll",0	; *
+@@:
+	Call LoadLibrary
+	%APIERR
+	Call @f
+	CHAR "GetHookAPIs",0
+@@:
+	push eax
+	Call GetProcAddress
+	%APIERR	
+
+	sub esp,4
+	push esp
+	Call @f
+	WCHAR "I","g","n","o","r","e","E","x","c","e","p","t","i","o","n", 0
+@@:
+	push NULL
+	Call Eax	; GetHookAPIs()
+	lea esp,[esp + 4]
+	%APIERR	; g_pAPIHooks@tagHOOKAPI
+	
+	invoke RtlAddVectoredExceptionHandler, 1, addr VEH	; 1'st
+	%APIERR
+	
+	mov ebx,LIST_ENTRY.Flink[eax]
+	invoke RtlEncodePointer, dword ptr [ebx + sizeof(LIST_ENTRY)]
+	mov ebx,eax	; ExceptionFilter@EXCEPTION_POINTERS -> GetInstructionLengthFromAddress()
+
+;	- Query & Call -
+	lea esi,Ip
+	
+	lea ecx,ExceptionRecord
+	lea edx,ContextRecord
+	mov ExceptionRecord.ExceptionCode,STATUS_PRIVILEGED_INSTRUCTION
+	mov ExceptionRecord.ExceptionFlags,0
+	mov ExceptionRecord.NumberParameters,0
+	mov ExceptionRecord.ExceptionAddress,esi
+	lea eax,ExceptionPointers
+	mov ContextRecord.regEip,esi
+	mov ExceptionPointers.ExceptionRecord,ecx
+	mov ExceptionPointers.ContextRecord,edx
+	
+	push eax
+	Call Ebx
+	.if Eax != EXCEPTION_CONTINUE_EXECUTION
+	Int 3
+	.endif
+	
+	mov eax,ContextRecord.regEip
+	sub eax,esi	; Length.
+	
+	%APIERR
+	
+	Int 3
+Ip:
+	lea eax,[esi + ebx*2 + 12345678H]
+	ret
+-
+Формирование SFC шлюзом.
+ Если менеджер обьектов сохраняет бактрейс(HandleTracing), то можно найти описатель обьекта имея адрес во
+ зврата из системного стаба, из которого был создан обьект. Стабы(Zw*) и шлюз(Ki*) не формируют SFC, след
+ ует её сформировать вручную(два фрейма):
+ ; KiFastSystemCall/KiIntSystemCall:
+	pop edx	; ~Stub
+	push ebp
+	push edx
+	push esp
+	mov ebp,esp
+	lea edx,[esp + 4*4]
+	add dword ptr [esp],4
+	Int 2Eh
+	leave
+	mov ebp,dword ptr [ebp]
+	ret 4
+ Тогда в бактрейсе будет сохраняться адрес возврата из шлюза в стаб и из стаба в вызывающий его код.
+-
+Изоляция SFC ISR.
+ Регистр Ebp, как и линк на следующий описатель в стековом фрейме может адресавать как следующий стековый 
+ фрейм, так и трап-фрейм. Цепочка сех предыдущей ISR должна находится в диапазоне стека начиная от KTRAP_
+ FRAME.ExceptionList, заканчивая трап-фреймом. Первые 4 поля трап-фрейма:
+  DbgEbp - адресует стековый фрейм предыдущей ISR(тоже в rEbp).
+  DbgEip - адрес возврата из ISR. Для фасткалов это KiFastSystemCallRet().
+  DbgArgMark - сигнатура 0xBADB0D00 для идентификации фрейма.
+  DbgArgPointer - ссылка на параметры сервиса(значение регистра Edx).
+ Сравнивается значение в фрейме по смещения +8 с 0xBADB0D00. Если эта сигнатура определена, то фрейм явля
+ ется трап-фреймом и следует завершить раскрутку сех, иначе фрейм является стековым фреймом и все сех-фре
+ ймы лежащие ниже могут быть раскручены.
+-
+Ошибки в nt!RtlDispatchException().
+  o Код формирующий трап-фрейм без межкольцевых переключений не выравнивает стек. RtlDispatchException() 
+    выполняет проверки выравнивания цепочки сех фреймов на 4 байта. Изза этого не будет выполнена развёрт
+    ка цепочки сех и фолт не будет откатан. Это например возникновение фолта при стеке выравненном на два
+    байта. При формировании трап-фрейма стек должен выравниваться.
+  o При формировании трап-фрейма в нём сохраняется ссылка на текущую цепочку сех(KTRAP_FRAME.ExceptionLis
+    t), после чего она инициализируется(KPCR.Tib.ExceptionList -> EXCEPTION_CHAIN_END, ENTER_TRAP не иниц
+    иализирует). Таким образом выполняется изоляция цепочек разных ISR. При раскрутке сех предыдущая цепо
+    чка не будет затронута. RtlpGetRegistrationHead() читает начало цепочки сех текущего ISR, выполняя её 
+    развёртку. Это приводит к ракрутке всей цепочки сех текущей ISR. Начало цепочки должно извлекаться из 
+    трап-фрейма, при этом будет выполнена раскрутка цепочки сех предыдущей ISR.
+-
+Захват багчеков.
+ Трап-фрейм передаётся в KeBugCheck2(). Если перехватить эту функцию будет возможность откатать ошибку и 
+ восстановить состояние задачи. Выполняем инвалидацию ссылок, либо любые иные действия приводящие к генер
+ ации багчека, обрабатываем его и изменяем ход исполнения кода необходимым образом(бактрейс, трассировка 
+ и пр.). Оптимальны два варианта:
+  o KiDumpParameterImages() -> InbvDisplayString() -> Nt(.data)!_InbvDisplayFilter() etc.
+  o KeStallExecutionProcessor() -> Hal(.data)!_HalpAcpiTimerStallExecProc(вызов после остановки всех проц
+    ессоров, это посылка IPI(KiIpiSend(IPI_FREEZE)), что требует восстановление состояние задач на всех п
+    роцессорах например посредством KeThawExecution()).
+-
+Запрет на захват системного хипа посредством IDP.
+ При захвате Peb.ProcessHeap:PHEAP(+0x18, 0x588) поток входит в бесконечный цикл. Внутренние ссылки струк
+ туры проверяются. Техника требует использование ссылок с отсутствием их проверки.
+  > http://indy-vx.narod.ru/Info/Hmgr.png
+-
+Бактрейс без использования стековых фреймов(SFC).
+ Если процедуры не формируют стандартный пролог, тоесть цепочки стековых фреймов нет, то обычный бактрейс 
+ не возможен. Для решения необходимо создать граф для процедуры и определить размер стека увеличенного пр
+ оцедурой. При этом необходимо определить каким образом изменяет регистр Esp каждая инструкция. При испол
+ ьзовании движка GCBE могут использоваться следующие решения:
+  o Создать полную таблицу обратных ссылок. Тоесть все ветвления на инструкцию должны быть определены в о
+    писателе её. Тогда смещение стека будет определено для инструкции выполняющей возврат из процедуры.
+  o Выполнять трассировку графа и сохранять смещение стека для текущей инструкции. Если следующая инструк
+    ция завершает процедуру смещение стека будет определено.
+-
+Исправлена ошибка в загрузчике.
+ > http://indy-vx.narod.ru/Bin/LdrUpd.zip
+-
+Инициализация SxS.
+ Если загружаемый из памяти модуль содержит манифест в виде ресурса(CREATEPROCESS_MANIFEST_RESOURCE_ID), 
+ то контекст активации не будет должным образом инициализирован. Это выполняется сервером при создании пр
+ оцесса(нотификация и вызов csrss!basesrv.dll), либо динамически для загружаемых модулей(сервис BaseSrvSx
+ sCreateActivationContext). Манифест может быть найден в ресурсах посредством ntdll!LdrFindCreateProcessM
+ anifest(). Загрузку манифеста выполняет функция kernel32!CreateActCtx(), которая сводится к kernel32!Bas
+ epCreateActCtx -> kernel32!CsrBasepCreateActCtx(). При этом манифест передаётся одним из параметров серв
+ иса серверу, обработку минифеста выполняет модуль sxs.dll, динамически подгружаемый сервером. Инициализа
+ ция завершается с помощью kernel32!ActivateActCtx/ntdll.RtlActivateActivationContext().
+-
+Интерфейс Fly VM(DrWeb(c) CureIt VM).
+ В самораспаковывающимся архиве имеется модуль Setup.dll - это и есть VM. При инициализации сканера этот 
+ модуль отображается в верхние адреса адресного пространства посредством чтения его с диска и настройки 
+ релоков, что сделано для сокрытия. Этот модуль не содержит никаких импортов. Модуль экспортирует две фун
+ кции - DRWEB_InitDll() и DRWEB_InitDllEx(). Интерфейс основан на механизме сервисов и калбэков. Приложен
+ ие регистрирует массив обработчиков, которые будут вызываться движком в просессе эмуляции. Обращение к д
+ вижку выполняется посредством сервисов. Ссылка на сервисный вход возвращается при инициализации движка:
+ typedef PFLY_SERVICE_ENTRY DRWEB_InitDll(
+ IN PVOID CallbackTable,
+ IN ULONG Callbacks,
+ IN PLARGE_INTEGER Flags,
+ IN PVOID ExtendedTable OPTIONAL
+ );
+ где CallbackTable - ссылка на массив описателей калбэков. Каждый калбэк описывается структурой:
+  typedef struct _FLY_CALLBACK_FIELD {
+  PVOID Routine;
+  ULONG Arguments;
+  } FLY_CALLBACK_FIELD, *PFLY_CALLBACK_FIELD;
+  где Routine - ссылка на калбэк. Все калбэки имеют модель вызова CDECL.
+      Arguments - число аргументов передаваемых через стек в калбэк.
+ Callbacks - число калбэков в массиве. Для ядра пятой версии определено 60 калбэков. Каждый калбэк получа
+ ет первым параметор значение, переданное в сервис. Это может быть ссылка на параметры в стеке или произв
+ ольный пользовательский параметр. Расширенная процедура инициализации DRWEB_InitDllEx() содержит дополни
+ тельно пользовательский параметр, передаваемый в калбэк.
+ Значение возвращае DRWEB_InitDll[Ex]() - ссылка на сервисный вход, который имеет прототип:
+ typedef PVOID (*FLY_SERVICE_ENTRY)(
+ IN DWORD Parameter,
+ IN ULONG ServiceID
+ );
+ где Parameter - значение передаваемое первым параметром в калбэк.
+     ServiceID - номер вызываемого сервиса.
+ Выше в стеке расположены параметры уникальные для сервиса.
+ При возникновении разных событий будут вызываться зарегистрированные калбэки, которые должны возвращать в 
+ движёк необходимую ему инфу. По сути это запросы. Пример инициализации:
+ %FLYERR macro
+	.if Eax == -1
+	Int 3
+	.endif
+ endm
+ 
+ %ISFLYERR macro
+	.if !Eax
+	dec eax
+	.endif
+ endm
+
+ %ISFLYNTERR macro
+	.if Eax
+	mov eax,-1
+	.endif
+ endm
+
+ %FLYCALL macro ServiceID, CallbackParameter
+	push ServiceID
+	push CallbackParameter
+	Call FlyService
+	add esp,2*4
+ endm
+ 
+ FlyHandle	HANDLE ?
+ FlySetup	PVOID ?	; @DRWEB_InitDll()
+ FlyService	PVOID ?	; @Stub
+
+ FLY_Flags	ULONG 00000004H, 00000258H	; def.
+ 
+ FLY_CALLBACK_FIELD struct
+ Routine		PVOID ?
+ Arguments		ULONG ?
+ FLY_CALLBACK_FIELD ends
+
+ FLY_CallbackTable\
+	FLY_CALLBACK_FIELD <>	; .. #0
+	FLY_CALLBACK_FIELD <FLY_AllocateBuffer, 1>	; #1
+	; ...
+	
+ FLY_CALLBACK_TABLE_SIZE	equ 3CH
+
+ $Fly	CHAR "Setup.dll",0
+ $Setup	CHAR "DRWEB_InitDll",0
+
+ FLY_GET_VERSION	equ 8H
+; +
+; Один из калбэков, вызывается при запросе движком на выделение буфера. Необходим при инициализации движка.
+;
+	assume fs:nothing
+ FLY_AllocateBuffer proc C Reserved:ULONG, SizeOfBuffer:ULONG
+	mov eax,fs:[TEB.Peb]
+	invoke RtlAllocateHeap, PEB.ProcessHeap[eax], HEAP_ZERO_MEMORY, SizeOfBuffer
+	%ISFLYERR
+	ret
+ FLY_AllocateBuffer endp
+
+; Загрузка и инициализация.
+	invoke LoadLibrary, addr $Fly
+	%APIERR
+	mov FlyHandle,eax
+	invoke GetProcAddress, Eax, offset $Setup
+	%APIERR
+	mov FlySetup,eax
+	push NULL
+	push offset FLY_Flags
+	push FLY_CALLBACK_TABLE_SIZE
+	push offset FLY_CallbackTable
+	Call Eax
+	add esp,4*4
+	%FLYERR
+	mov FlyService,eax	; PFLY_SERVICE_ENTRY
+; Test.
+	%FLYCALL FLY_GET_VERSION, NULL
+	%FLYERR
+	; ...
+-
+Исправлена грубая ошибка в IDP:
+ > http://indy-vx.narod.ru/Bin/Idp3.1.zip
+-
+Загрузка провайдера верификации из памяти и инициализация.
+ > http://indy-vx.narod.ru/Bin/AVrf.zip
+-
+Поиск AVrfInitializeVerifier().
+ - Перечисляем фиксапы и ищем загрузку ссылки.
+ - Следующая инструкция Call DbgPrint.
+ - Проверяем ссылку, это строка "AVRF: -*- final list of providers -*- ",LF.
+ - Посредством ldasm трассируем до конца процедуры(0xC2) и извлекаем число параметров.
+ - Сканируем память вниз и ищем пролог(nop/nop/nop/nop/mov edi,edi/push ebp/mov ebp,esp).
+ o Строка не меняется в версиях. Число параметров различно.
+-
+Захват сервисов с помощью логгера.
+ Для захвата апи можно использовать следующую технику.
+  o Функция возвращает описатель, который далее используется сервисами. Этот описатель заменяется на инва
+    лидный. Нормально при работе с ним сервисы будут возвращать STATUS_INVALID_HANDLE.
+  o Системный логгер может логгировать события связанные с описателями, сохраняя их и бактрейс(PROCESS_HA
+    NDLE_TRACING_QUERY на момент использования описателя. Если описатель инвалидный, то генерируется #STA
+    TUS_INVALID_HANDLE, причём генерация исключения выполняется посредством KeRaiseUserException(), тоест
+    ь исключение генерируется в юзермоде из KiRaiseUserExceptionDispatcher(). Этот функционал доступен че
+    рез инфокласс ProcessHandleTracing. Таким образом включаем логгирование. Далее при использовании инва
+    лидного описателя будет возникать исключение.
+  o Обрабатываем #STATUS_INVALID_HANDLE в VEH. Восстанавливаем контекст, стек и перезапускаем сервис, пер
+    едав валидный описатель. Далее выполняем бактрейс и захват адреса возврата из функции.
+     - Для восстановления контекста эмулировать инструкции leave и ret.
+     - Восстановить описатель в стеке. Все сервисы принимают описатель первым параметром.
+     - Для динамической инвалидации описателя(когда он уже создан) создать его копию, освободить оригинал
+       ьный и создать копию заранее созданного описателя иного типа. Для этого необходимо как минимум два 
+       описателя разного типа созданных заранее. Это довольно опасная манипуляция.
+       (*upd: тип описателя нельзя изменять.)
+  > http://indy-vx.narod.ru/Bin/LdrExts.zip
+-
+Поиск LdrpDllNotificationList.
+ Поиск этой переменной является проблемным. Решение может заключаться в анализе графа, при этом проблем н
+ ет. Но двиг создающий граф имеет большой размер, поэтому необходим механизм поиска этой переменной не ис
+ пользуя граф. Эта переменная адресует начало двусвзязанного списка(LIST_ENTRY) нотификаторов, вызываемых 
+ при загрузке и выгрузке модулей.
+ Ссылки на LdrpDllNotificationList:
+  - В LdrpInitializeProcess() выполняется инициализация списка, загрузкой указателей на эту переменную в 
+    начало списка. Так как заполняются различные списки, в частности LdrpCalloutEntryLock, то придётся ид
+    ентифицировать целевой список.
+  - LdrpSendDllLoadedNotifications()
+  - LdrpSendDllUnloadedNotifications()
+  - Последние две могут быть заменены на LdrpSendDllNotifications().
+  В старших версиях системы имеется в экспорте:
+  - LdrRegisterDllNotification()
+  - LdrUnregisterDllNotification()
+ LdrpSendDllLoadedNotifications() вызывается из LdrpMapDll().
+ LdrpSendDllUnloadedNotifications() вызывается из LdrUnloadDll().
+ Код значительно отличается в версиях. Неизменным остаётся модель вызова LdrpSendDllUnloadedNotifications
+ (), одним из параметров передаётся состояние загрузчика(LdrpShutdownInProgress):
+ 	xor eax,eax
+	cmp byte ptr ds:[LdrpShutdownInProgress],al
+	setne al
+	push eax
+	push esi
+	call LdrpSendDllUnloadedNotifications
+ Переменная LdrpShutdownInProgress устанавливается в TRUE, если выполняется завершение процесса(LdrShutdo
+ wnProcess()). В экспорте есть функция RtlDllShutdownInProgress(), возвращающая значение переменной LdrpS
+ hutdownInProgress, отсюда эта переменная может быть найдена. Таким образом механизм поиска переменной Ld
+ rpDllNotificationList следующий:
+  - Получаем ссылку LdrpShutdownInProgress из функции RtlDllShutdownInProgress().
+  - Находим фиксапы для этой ссылки. Целевой определяем по сигнатуре:
+    33C0		xor eax,eax
+    3805 XXXXXXXX	cmp byte ptr ds:[LdrpShutdownInProgress],al
+    0F95C0		setne al
+    50			push eax
+  - Следующая функция это LdrpSendDllUnloadedNotifications()/LdrpSendDllNotifications().
+  - Трассируем(ldasm) и находим инструкцию mov esi,dword ptr ds:[LdrpDllNotificationList], из которой изв
+    лекаем ссылку.
+-
+Расширения для лодера(*upd):
+  > http://indy-vx.narod.ru/Bin/LdrExts.zip
+-
+Получение идентификатора сигнатуры DrWeb.
+ Имя с сигнатурой связано идентификатором, индексирующим имя группы(напр. "Win32" и имя вируса).
+ В описателе сигнатуры лежит по смещению +0x15. Младшее слово(WORD) индексирует имя группы, старшее имя в
+ ируса. Идентификатор является номером записи в базе имён:
+  > http://indy-vx.narod.ru/Bin/DwIds.zip
+-
+Враппер для системного загрузчика:
+ > http://indy-vx.narod.ru/Bin/Ldr.zip
+ > http://indy-vx.narod.ru/Bin/Ij.zip
+ > http://indy-vx.narod.ru/Bin/cws.zip
+-
+Освобождение критической секции LdrpLoaderLock при завершении потока.
+ PspExitThread() выполняет освобождение этой критической секции.
+ o Структура в пользовательском адресном пространстве.
+ o Адрес PEB.LoaderLock:PRTL_CRITICAL_SECTION должен быть выравнен на границу 4-х байт.
+ o Текущий поток(OwningThread) захватил кс.
+ o Выполняется уменьшение счётчика захватов кс(LockCount) на число рекурсивных захватов текущим потоком(R
+   ecursionCount).
+ o Если кс освобождается(LockCount -> -1), выполняется сигнализация эвента(LockSemaphore).
+-
+DrWeb VM.
+ Плохая реализация виртуальной машины. Элементарные механизмы плохо эмулируются, флажки например:
+ > http://indy-vx.narod.ru/Info/Vm.png
+ Некоторые инструкции FPU выполняются непосредственно, но нет возможности вызвать исключение в виртуально
+ й машине, нет инструкции fwait, доставляющей исключения на CPU.
+ В Div/Idiv множество проверок(эта идея была у Z0mbie(http://vxheavens.com/lib/vzo03.html)).
+-
+Развёртка стека теневых калбэков в юзермоде(чтение памяти ядра посредством сервиса NtSystemDebugControl).
+ > http://indy-vx.narod.ru/Bin/Callout.zip
+ > http://indy-vx.narod.ru/Info/Cb.png
+-
+Сохранение и восстановление контекста.
+
+QUERY_SERVICE_ID macro
+	mov eax,dword ptr [_imp__EnumDisplayMonitors]
+	mov eax,dword ptr [eax + 1]	; ID NtUserEnumDisplayMonitors
+endm
+
+; +
+; Сохранение контекста.
+; o User32.dll инициализирована.
+; o Eax: адрес возврата при восстановлении контекста.
+; o Сохраняются регистры:
+;   - EFlags
+;   - Ebp
+;   - Ebx
+; o NPX не сохраняется.
+;
+SAVE_TASK_STATE macro
+	mov esi,eax
+	mov edi,esp
+	Call @f
+	jmp Break
+@@:	
+	pushad
+	xor ecx,ecx
+	push esp
+	Call @f
+	mov esp,dword ptr [esp + 4*4]
+	popad
+	ret
+@@:
+	push ecx
+	push ecx
+	QUERY_SERVICE_ID
+	mov edx,esp
+	Int 2EH
+	xor eax,eax
+	mov esp,edi
+	jmp esi
+Break:
+endm
+
+; +
+; Восстановление контекста.
+;
+RESTORE_TASK_STATE macro
+	xor eax,eax
+	mov edx,3*4
+	push eax
+	push eax
+	push eax
+	mov ecx,esp
+	Int 2BH
+endm
+-
+Чтение базового трап-фрейма из физической памяти(экв. NtGetContextThread).
+ > http://indy-vx.narod.ru/Bin/Trap.zip
+ > http://indy-vx.narod.ru/Info/Ts.png
+-
+; +
+; Ищет функцию KiFastSystemCall().
+; В случае успеха ZF = 1 и Ecx = @KiFastSystemCall().
+; o @KiIntSystemCall() = 16 + @KiFastSystemCall(),
+;   (оба шлюза выравнены на границу 16-и байт).
+; Align 16
+; KiFastSystemCall:
+; 	8BD4		mov edx,esp
+; 	0F34		sysenter
+; 	...
+; KiFastSystemCallRet:
+; 	C3		ret
+; 	...
+; Align 16
+; KiIntSystemCall:
+; 	8D5424 08	lea edx,dword ptr ss:[esp + 8]
+; 	CD 2E		int 2E
+; 	C3		ret
+;
+QueryGate proc C
+	mov ecx,fs:[TEB.Peb]
+	push eax
+	mov ecx,PEB.Ldr[ecx]
+	mov ecx,PEB_LDR_DATA.InLoadOrderModuleList.Flink[ecx]
+	push edi
+	mov ecx,LDR_DATA_TABLE_ENTRY.InLoadOrderModuleList.Flink[ecx]
+	mov ecx,LDR_DATA_TABLE_ENTRY.DllBase[ecx]
+	cld	
+	mov edi,ecx
+	mov eax,340FD48BH	; mov edx,esp/sysenter
+	add ecx,IMAGE_DOS_HEADER.e_lfanew[ecx]
+	assume ecx:PIMAGE_NT_HEADERS
+	add edi,[ecx].OptionalHeader.BaseOfCode
+	mov ecx,[ecx].OptionalHeader.SizeOfCode
+	shr ecx,2
+@@:
+	repne scasd
+	jne @f
+	cmp byte ptr [edi - 4 + 16 + 5],2EH
+	jne @b
+	lea ecx,[edi - 4]
+@@:
+	pop edi
+	pop eax
+	ret
+QueryGate endp
+-
+Gdi32!bBatchTextOut()
+ Инициирует вывод текста на контекст окна. Загружает текст в TEB.GdiTebBatch и устанавливает TEB.GdiBatch
+ Count(+0xF70), после чего вызов любого теневого сервиса приведёт к вызову калбэка NtGdiFlushUserBatch() 
+ диспетчером сервисов и далее Win32k.GreBatchTextOut(), которая отрисует текст.
+ Для поиска распарсить Gdi32!ExtTextOutW(). Для захвата можно использовать Lpk-калбэки('Language Pack'), 
+ которые устанавливаются в Gdi32!GdiInitializeLanguagePack() и User32!InitializeLpkHooks(). Для apfnDispa
+ tch определено три калбэка, используемые для отрисовки меню.
+-
+Проблемы обработки внутренних исключений для IDP-роутера(маршрутизатора).
+ Цепочка описателей сех(EXCEPTION_REGISTRATION_RECORD), начало которой лежит в TEB[0] является вторым фак
+ тором наряду с цепочкой стековых фреймов, связывающим процедуры. Если в процессе маршрутизации возникнет 
+ внутреннее исключение в процедуре обрабатываемое сех, то это собьёт стек. Обработчик может выполнить бак
+ трейс самостоятельно, либо восстановить стек(регистры Esp и Ebp), удалив из него несколько фреймов, тем 
+ самым вернуться на безопасное место. При этом если удаляется захваченный роутером фрейм(адрес возврата з
+ ахвачен), то маршрутизация больше не сможет выполняться(роутер не получит управления, ибо возврат на зах
+ ваченный адрес не произойдёт). Даже если маршрутизатор получит управление, то часть маршрута будет пропу
+ щена и дальнейшая обработка будет не возможной, так как маршрут описывается не только номером стекового 
+ фрейма, но и положением фреймов в маршруте. Для решения должна быть создана связь между описателями марш
+ рута и адресами процедур. Тогда можно будет определить положение описателя в маршруте(определить фрейм, 
+ на который происходит возврат из сех не является проблемой - бактрейс и захват адреса возврата из RtlDis
+ patchException(), в случае если обработчик системный и не использует самостоятельную загрузку контекста). 
+ При этом появляется проблема совместимости, так как адреса процедур будут различными в версиях, более то
+ го определять необходимо их динамически, исходя из маршрута. Возможны следующие решения:
+ o Создать граф для части кода, определённой в маршруте. Иногда это невозможно выполнить, так как адреса 
+   процедур могут определяться динамически.
+ o Выполнять бактрейс и дизассемблирование кода для поиска процедуры, которой принадлежит целевой код. Пр
+   и этом маршрутизация не выполняется.
+ o Отказаться от обработки внутренних исключений. Если стековые фреймы удаляются, то прекращать обработку.
+-
+Использование стека в качестве расширяемого буфера.
+ При обращении к сторожевой странице стека генерируется #PF(KiTrap0E()) и вызывается MiCheckForUserStackO
+ verflow() для расширения стека. Выполняется проверка на принадлежность страницы стеку, диапазон которого 
+ определён в TIB текущего потока. В следствии этого:
+  o Не возможно использование стека чужёго потока в качестве расширяемого буфера.
+  o Границы стороннего региона памяти могут быть загружены в TIB текущего потока, тогда при доступе к сто
+    рожевой странице в этом регионе он будет расширен без генерации STATUS_GUARD_PAGE_VIOLATION.
+ Нижняя граница стека определена в TEB.DeallocationStack(+0xE0C). Это значение может быть изменено, но та
+ к как память резервируется при создании стека потока, то ниже этого адреса память может быть занята. Это 
+ делает не возможным динамически расширять стек свыше изначально установленного размера. Если известен ма
+ ксимальный размер стека при использовании расширяемого буфера, то необходимо создать новый поток, указав 
+ резервируемый размер стека равный сумме необходимого размера буфера и непосредственно памяти используемо
+ й в качестве стека. Далее переключить текущий контекст на этот поток и использовать буфер ниже области о
+ тведённой под рабочий стек(предварительно выделить все его страницы последовательным обращением к ним).
+-
+Загрузка модуля из памяти(R3).
+ Использовать эмуляцию фалов проблемно, так как придётся выполнять захват и трассировать LdrpCreateDllSec
+ tion() и далее код. Использование секций лучшее решение. Образ проецируется функцией LdrpMapDll(). Прове
+ ряется наличие секции в директории \KnownDlls и если она существует, то проецируется. Хэндл директории х
+ ранится в переменной LdrpKnownDllObjectDirectory и загружается туда при инициализации процесса. Директор
+ ия может использоваться следующим образом:
+  o Создаём в ней именованную секцию, которая будет проецироваться автоматически загрузчиком.
+    + Секция глобальна в системе. В контексте этой задачи не нужно.
+    - Может не быть прав на создание секции. Создание секции в этой директории может присекаться защитой.
+  o Заменяем описатель директории в переменной LdrpKnownDllObjectDirectory на свой, либо закрываем описат
+    ель директории и создаём новую директорию с такимже значением описателя(искать переменную не нужно).
+    + Директория \KnownDlls не изменяется.
+    - Необходимо создать секции в этой директории, определённые в \KnownDlls директории. Не критично, есл
+      и секции не окажется, то будет выполнена загрузка с диска.
+  o Отслеживаем доступ к переменной LdrpKnownDllObjectDirectory, либо открытие секции из этой директории.
+    + Полное сокрытие, локальные не именованные объекты.
+    - Нет.
+ Последний способ наилучший. Необходимо выполнить захват функции LdrpCheckForKnownDll(), либо некоторых д
+ ругих:
+  o Захват LdrpCheckForKnownDll().
+    - Спроецировать свою секцию, возвратить хэндл секции и полное имя модуля.
+  o Захват сервиса NtOpenSection, вызываемого для проецирования секции из LdrpCheckForKnownDll().
+    - Директорию создавать не нужно, спроецировать свою секцию. Имя модуля будет сформировано из системно
+      й директории.
+  o Хардварный останов на сервсиы либо переменную.
+    - Локально для потока.
+  o Регистрация калбэка в LdrpAppCompatDllRedirectionCallbackFunction и дальнейшая трассировка до входа в 
+    LdrpCheckForKnownDll().
+    > http://indy-vx.narod.ru/Info/AppCompatDllRedirectionCallback.txt
+  o Захват LdrpEnsureLoaderLockIsHeld(), обработка исключения STATUS_NOT_LOCKED и дальнейшая трассировка.
+    - Опасно и крайне не желательно для применения.
+  o Захват LdrpMapDll() средствами логгера(ShowSnaps) и трассировка.
+    - Хороший способ, желателен для применения.
+  o Захват множества частей кода используя IDP.
+    - Необходим двиг, не желательно для применения(размер кода увеличивает).
+  o Трассировка загрузчика, как альтернативный способ захвата.
+    - Локально для потока, тред сам инициирует загрузку. Загрузчик изменяется в версиях, поэтому данный с
+      пособ рассматривается как лучший.
+-
+	push fs	; 0x3B
+	pop ds
+	Int 2BH	; AV ?
+	mov cx,ds	; 0x23
+	lea eax,[(offset Body - (STATUS_NO_CALLBACK_ACTIVE + 8*(KGDT_R3_DATA or RPL_MASK))) + eax + ecx*8]
+	jmp eax
+-
+Исключение в KiCallbackReturn(ISR 0x2B).
+ Обработчик в XP не загружает дефолтный селектор в регистр Ds:
+ KiCallbackReturn:
+	push fs
+	push ecx
+	push eax
+	mov ecx,0x30	; KGDT_R0_PCR
+	mov fs,cx
+	mov eax,dword ptr fs:[0x124]	; KPRCB.CurrentThread:PKTHREAD
+	mov ecx,dword ptr ds:[eax + 0x12C]	; KTHREAD.CallbackStack
+	or ecx,ecx
+	je CbExit
+	...
+ CbExit:
+	add esp,8
+	pop fs
+	mov eax,0xC0000258	; STATUS_NO_CALLBACK_ACTIVE
+	iretd
+ Если вызвать из юзермода Int 0x2B с нулевым селектором в регистре Ds, то возникнет #GP на инструкции:
+ 	mov ecx,dword ptr ds:[eax + 0x12C]
+ ISR 0xD(#GP, KiTrap0D) проверяет значение в сегментном регистре Ds и если значение в нём отлично от 0x23
+ (KGDT_R3_DATA OR RPL_MASK), то восстановит его и вернёт управление на прерванную инструкцию.
+-
+Первичный вызов теневых сервисов(конвертация в GUI-процесс).
+ Если в процессе есть статический импорт User32.dll, либо она загружается динамически, то после загрузки 
+ модуля выполняется его нотификация, загрузчик вызывает InitRoutine, экспортируемую как User32!UserClient
+ DllInitialize(). Выполняется соеденение с csrss посредством CsrClientConnectToServer(USERSRV_SERVERDLL_I
+ NDEX). Сервер вызывает Winsrv!UserClientConnect(), которая сводится к сервису NtUserProcessConnect. Серв
+ ис вызывает Win32k!InitMapSharedSection(), которая проецирует секцию с базой данных менеджера обьектов W
+ in32k!ghSectionShared. Сервер возвращает структуру USERCONNECT, часть её(SHAREDINFO) копируется в переме
+ нную User32!gSharedInfo. Инициализируется переменная User32!gpsi и загружается ссылка на apfnDispatch в 
+ PEB.KernelCallbackTable. Далее выполняется инициализация GDI(Gdi32!GdiDllInitialize()). Отсюда вызываетс
+ я первый теневой сервис NtGdiInit(является просто заглушкой), возвращающей TRUE. Вызов первого теневого 
+ сервиса приводит к вызову nt!PsConvertToGuiThread(). Функция расширяет стек потока и вызывает два калбэк
+ а. Первый [nt!PspW32ProcessCallout] = @Win32k!W32pProcessCallout, второй [nt!PspW32ThreadCallout] = @Win
+ 32k!W32pThreadCallout(). Ссылки на калбэки загружаются при инициализации Win32k функцией nt!PsEstablishW
+ in32Callouts(). Win32k!W32pProcessCallout() вызывает Win32k!GdiProcessCallout(), которая помимо остально
+ й работы выполняет:
+   o Загрузку в PEB + 0x9C значение переменной Win23k!gInitialBatchCount.
+   o Проецирует секцию Win32k!gpHmgrSharedHandleSection и загружает адрес проекции в PEB + 0x94(GdiSharedH
+    andleTable).
+   o Очищает буффер размером 0x80 в PEB + 0xC4(GdiHandleBuffer).
+ Win32k!W32pThreadCallout() вызывает Win32k!xxxClientThreadSetup(), доставляющую сообщение apfnDispatch[C
+ lientThreadSetup] в юзермод(таблица калбэков загружена ранее) для инициализации пользовательской части. 
+ Вызывается User32!ClientThreadSetup() и Gdi32!GdiProcessSetup(). Последняя помимо остальной работы загру
+ жает переменные:
+   o Gdi32!pGdiSharedMemory и Gdi32!pGdiSharedHandleTable из PEB.GdiSharedHandleTable.
+   o Gdi32!GdiBatchLimit загружается из PEB + 0x9C(Win32k!gInitialBatchCount).
+   o Gdi32!pGdiHandleCache загружается ссылка на PEB + 0xC4(GdiHandleBuffer).
+ После чего поток возвращается в ядро, а из него в юзермод, на этом сервис NtGdiInit заканчивается. Вызыв
+ ается  ещё раз Gdi32!GdiProcessSetup(). Далее поток отработает и возвращается на загрузчик.
+ Таким образом вызов первого теневого сервиса возможен только если таблица калбэков инициализирована. Ина
+ че при обращении к таблице возникнет исключение. Если установить заглушку на apfnDispatch[ClientThreadSe
+ tup], то калбэк будет успешно вызван. Но так как поток уже будет сконвертирован в GUI, то последующие вы
+ зовы теневых сервисов не инициируют инициализацию шадова. ClientThreadSetup() не будет вызвана при иници
+ ализации User32.dll, ибо не будет доставлено сообщение. Перед вызовом первого теневого сервиса модуль Us
+ er32.dll должен быть загружен и инициализирован. Это ставит запрет на вызов теневых сервисов до инициали
+ зации этого модуля.
+-
+ При вызове не валидного теневого сервиса в XP выполняется переход на KiBBTUnexpectedRange. Возвращается 
+ значение из таблицы с кодами ошибок, расположенной сразу за теневой таблицей сервисов. При извлечении зн
+ ачения диапазон не проверяется и обращение происходит за пределы таблицы, например:
+ 
+     Win32k.sys
+ >----------------< Секция кода.
+ W32pServiceTable:
+ $	@NtGdiAbortDoc
+ 	...
+ $+A6C	00000101
+ $+A70	01000000
+ $+A74	01000001
+ $+A78	01010101
+ $+A7C	01010101
+ 	...
+ W32pServiceLimit:
+ $+D0C	0000029B
+ W32pArgumentTable:
+ 	...
+ >----------------< Секция данных, переменные ядра.
+ 	...
+ gdtDblClk:
+ $+1024	000001F4
+ gMouseSpeed:
+ $+1028	00000001
+ 	...
+ 
+ ; Disp = Limit*4 + (ID & 0xFFF)
+ ; Disp = 0x29B*4 + (ID & 0xFFF)
+ 
+ ; Читаем младший байт переменной gdtDblClk(Global Double Click Delta).
+ ; gdtDblClk_ID = 0x1024 - 0x29B*4 = 0x5B8
+ 
+ 	mov eax,0x15B8
+ 	int 0x2e
+ ; Eax: 0xFFFFFFF4
+-
+Иногда шадов зависает при суспенде процесса(всех потоков процесса посредством NtSuspendProcess).
+ Причины две:
+   o Диспетчеризация хуков, это вызов калбэков fnHk*.
+   o Доставка глобальных сообщений(WND_BROADCAST). Вызов xxxBroadcastMessage/xxxSystemBroadcastMessage().
+ Например при изменении настроек проводника доставка WM_WININICHANGE(см. messages.h) в SendMessageTimeout
+ W(WND_BROADCAST, "ShellState", 30000мс) приводит к синхронном вызовывам калбэка fnINSTRINGNULL. Если как
+ ойлибо гуи-процесс заморожен, проводник зависнет в ожидании.
+-
+; ntcb.h
+; apfnDispatch[fnDWORD]
+;
+; FNDWORDMSG {
+; 	PWND pwnd;
+; 	UINT msg;
+; 	WPARAM wParam;
+; 	LPARAM lParam;
+; 	ULONG_PTR xParam;
+; 	PROC xpfnProc;
+; } FNDWORDMSG;
+
+fnDWORD	equ 2
+
+;	...
+	mov eax,fs:[TEB.Peb]
+	push offset fnCallback	; Link!
+	mov eax,PEB.KernelCallbackTable[eax]
+	sub esp,5*4
+	push esp
+	сall dword ptr [eax + 4*fnDWORD]	; AV ?
+	add eax,(offset Body - STATUS_NO_CALLBACK_ACTIVE)
+	add esp,6*4
+	jmp eax
+fnCallback:
+	DECRYPT_BODY
+	ret 5*4
+-
+Тестовый код для захвата сервисов(R3).
+ > http://indy-vx.narod.ru/Bin/NtIcp.zip
+ > http://indy-vx.narod.ru/Bin/SysIcp.zip
+-
+Захват критических секций.
+ Если в критическую секцию входит поток, в то время как в неё прежде вошёл другой поток, она будет ждать 
+ её освобождения. Изменив счётчик входов(RTL_CRITICAL_SECTION.LockCount и TID потока в критической секции
+ (OwningThread) потоки входящие в неё будут ждать сигнализацию обьекта(LockSemaphore). В это время доступ
+ ен трап-фрейм(контекст) потока. Изменяем его, либо выполняем захват адреса возврата в стеке, после чего 
+ выходим из критической секции или вручную сигнализируем обьект(созданный заранее или эвент, динамически 
+ созданный в RtlpCheckDeferedCriticalSection() и загруженный в описатель критической секции). Список RtlC
+ riticalSectionList защищён критической секцией RtlCriticalSectionLock. Можно также выполнить захват её(ф
+ ункция RtlInitializeCriticalSectionAndSpinCount(), RtlInitializeCriticalSection()).
+-
+Техника IDP с точки зрения номеров стековых фреймов.
+ Индекс стекового фрейма(SFN) - номер фрейма в цепочке стековых фреймов(SFC). Соответствует уровню вложен
+ ности процедуры в графе. При вызове процедуры индекс увеличивается, при возврате уменьшается. Для достиж
+ ения целевого адреса выполняется проход по наименьшему пути в графе. Пусть N - индекс стекового фрейма в 
+ последовательности фреймов, образующих кратчайший путь до целевого адреса в графе, N - текущий, N' - сле
+ дующий. Тогда:
+   o Если N < N', то выполняется трассировка кода до входа в процедуру(до увеличения SFN).
+   o Если N > N', то выполняется захват адреса возврата(бактрейс). Адрес возврата в текущем стековом фрей
+     ме заменяется на новый. На этот адроес произойдёт возврат из процедуры, при это SFN уменьшится.
+   o Если N = N', то выполняется трассировка кода с пропусканием процедур (без трассировки вложенных проц
+     едур). Когда в процессе трассировки будет поднят SFN, тоесть выполнен вход в процедуру, выполняется 
+     замена адреса возврата и трассировка прекращается. При возврате из процедуры на подменённый адрес тр
+     ассировка вновь возобновляется.
+ > http://indy-vx.narod.ru/Info/Idp.png
+-
+Захват RtlAllocateHeap().
+ Изменить сигнатуру в HEAP.Signature[PEB.ProcessHeap]. RtlpCheckHeapSignature() проверяет сигнатуру HEAP_
+ SIGNATURE и если она не валидна выводит отладочные сообщения. Если к процессу подключен отладчик, то вып
+ олняется останов в RtlpBreakPointHeap(). Фильтровать отладочные сообщения, при обнаружении целевого выпо
+ лнить бактрейс и захват адреса возврата. При возврате из RtlpCheckHeapSignature() вернуть TRUE.
+ Для поиска RtlpCheckHeapSignature() извлечь ссылку из RtlLockHeap() или RtlUnlockHeap().
+ o PEB.BeingDebugged -> TRUE
+ o PEB.ProcessHeap.Signature -> Invalid(~HEAP_SIGNATURE).
+ o Фильтровать DBG_PRINTEXCEPTION_C("Invalid heap signature for heap at %x")
+   <EXCEPTION_RECORD>
+	ExceptionCode = DBG_PRINTEXCEPTION_C
+	ExceptionFlags = 0
+	NumberParameters = 2
+	ExceptionInformation[0] = Length + 1
+	ExceptionInformation[1] = @String
+ o На время вывода сообщения TEB.InDbgPrint = 1.
+ o Выполнить захват адреса возврата из RtlpCheckHeapSignature(), возвращать TRUE.
+ o Пропустить останов(STATUS_BREAKPOINT, RtlpBreakPointHeap() -> DbgBreakPoint()).
+-
+Захват LdrpCallInitRoutine().
+ Взвести старший бит в ссылке на InitRoutine(LDR_DATA_TABLE_ENTRY.EntryPoint). Обращение произойдёт за пр
+ еделы юзерспейса(+0x80000000), генерируется STATUS_ACCESS_VIOLATION. Значения EXCEPTION_RECORD.Exception
+ Address и CONTEXT.rEip равны адресу на который произошёл переход. Сбросить старший бит и вернуть управле
+ ние, возможна проверка на наличие в базе данных загрузчика данной ссылки(вызывается с залоченной текущим 
+ потоком критической секцией LdrpLoaderLock).
+-
+Редирект ApfnDispatch(KernelCallbackTable).
+;
+; ApfnDispatch:
+;	  ...
+;	@Fn1	; (N)
+;	@Fn2	; (N + 1)
+;	  ...
+;
+; [(N), P]:
+; 	push @Fn1	; x5
+; 	jmp Stub	; x5
+; [(N + 1), P + 10]:
+; 	push @Fn2
+; 	jmp Stub
+;	  ...
+;
+; Stub:
+;	  ...
+;	  ret
+
+IMAGE_MASK equ 0FF000000H
+
+	assume fs:nothing	
+ApfnQuery proc uses ebx esi edi ApfnBase:PVOID, ApfnSize:PULONG
+	mov ebx,fs:[TEB.Peb]
+	mov edx,ApfnBase
+	mov ebx,PEB.KernelCallbackTable[ebx]
+	mov eax,STATUS_UNSUCCESSFUL	
+	test ebx,ebx
+	mov esi,ebx
+	jz Exit
+	mov dword ptr [edx],ebx
+	cld
+	and ebx,IMAGE_MASK
+	mov edi,esi
+@@:
+	lodsd
+	and eax,IMAGE_MASK
+	cmp eax,ebx
+	je @b
+	sub esi,edi	; Размер таблицы в байтах.
+	mov eax,STATUS_UNSUCCESSFUL
+	sub esi,4
+	mov edx,ApfnSize
+	jz Exit
+	mov dword ptr [edx],esi
+	xor eax,eax
+Exit:
+	ret
+ApfnQuery endp
+
+APFN_INFORMATION struct
+OldApfnBase	PVOID ?
+ApfnBase	PVOID ?
+OldApfnSize	ULONG ?
+ApfnSize	ULONG ?	; ..Page
+APFN_INFORMATION ends
+PAPFN_INFORMATION typedef ptr APFN_INFORMATION
+
+ApfnRedirect proc uses ebx esi edi Stub:PVOID, ApfnInformation:PAPFN_INFORMATION
+Local Apfn:APFN_INFORMATION
+	invoke ApfnQuery, addr Apfn.OldApfnBase, addr Apfn.OldApfnSize
+	test eax,eax
+	mov ecx,Apfn.OldApfnSize
+;  s = n + n*2 + n/2
+;  s = (n/2)*7
+	jnz Exit
+	shr ecx,1
+	mov Apfn.ApfnBase,eax
+	lea edx,[ecx*8]
+	push PAGE_EXECUTE_READWRITE
+	sub edx,ecx
+	lea eax,Apfn.ApfnSize
+	push MEM_COMMIT
+	lea ecx,Apfn.ApfnBase
+	mov Apfn.ApfnSize,edx
+	push eax
+	push 0
+	push ecx
+	push NtCurrentProcess
+	Call ZwAllocateVirtualMemory
+	test eax,eax
+	mov ecx,Apfn.OldApfnSize
+	jnz Exit
+	mov edx,Apfn.ApfnBase
+	mov ebx,Stub	; Disp.
+	mov edi,edx
+	mov esi,Apfn.OldApfnBase
+	add edi,ecx
+	cld
+	sub ebx,edi
+	shr ecx,2
+	sub ebx,2*5
+@@:
+	lodsd
+	mov byte ptr [edi],68H	; Push fnXX
+	mov byte ptr [edi + 5],0E9H	; Jmp Stub
+	mov dword ptr [edi + 1],eax
+	mov dword ptr [edi + 6],ebx
+	mov dword ptr [edx],edi
+	sub ebx,10
+	add edi,10
+	add edx,4
+	loop @b
+	mov ecx,fs:[TEB.Peb]
+	mov edx,Apfn.ApfnBase
+	lea esi,Apfn
+	mov edi,ApfnInformation
+	xor eax,eax
+	lock xchg PEB.KernelCallbackTable[ecx],edx
+	movsd
+	movsd
+	movsd
+	movsd
+Exit:
+	ret
+ApfnRedirect endp
+
+.data
+CallbackCount	ULONG ?
+
+.code
+ApfnStub proc C
+	inc CallbackCount
+	ret
+ApfnStub endp
+
+Local ApfnInformation:APFN_INFORMATION
+	invoke ApfnRedirect, addr ApfnStub, addr ApfnInformation
+	...
+-
+Отлеживание изменения RtlpCalloutEntryList для фиксирования описателя VEH в начале списка обработчиков(оп
+исано в предыдущем посте).
+ o Обращение к списку описателей векторных обработчиков исключений(RtlpCalloutEntryList) должно выполнять
+   ся при захваченной критической секции RtlpCalloutEntryLock. При вызове обработчиков из этого списка в 
+   RtlCallVectoredExceptionHandlers() также выполняется захват(вход) этой критической секции. Избежать де
+   адлока при исключении и захваченной критической секции позволяет тот факт, что диспетчер исключений вы
+   зывается в контексте потока в котором произошло исключение и возможности повторных входов одно потока 
+   в критическую секцию.
+ o При изминении списка возникнет исключение:
+; RtlAddVectoredExceptionHandler:
+; RtlpCalloutEntryList:LIST_ENTRY
+; Esi:LIST_ENTRY
+	mov eax,dword ptr ds:[RtlpCalloutEntryList]	; Flink
+	mov dword ptr ds:[esi],eax
+	mov dword ptr ds:[esi+4],offset RtlpCalloutEntryList
+	mov dword ptr ds:[eax+4],esi	; #GP
+	mov dword ptr ds:[RtlpCalloutEntryList],esi
+;	...
+   Возможное решение. В векторном обработчике исключений выполняем вход в критическую секцию RtlpCalloutE
+   ntryLock. Перед вызовом векторных обработчиков также выполняется вход в эту секцию. Тогда при возврате 
+   из RtlAddVectoredExceptionHandler() секция останется захваченной и другой поток будет ждать её освобож
+   дения, модификация будет безопасной. При этом могут быть изменены атрибуты страницы с описателем(разре
+   шена запись), заменён адрес возврата из RtlAddVectoredExceptionHandler() или использована техника IDP.
+   	> http://indy-vx.narod.ru/Bin/Barrier.zip
+-
+Захват сервисов(R3).
+ Единственный способ который мы видим это создание нового сегмента с пределом ниже SharedUserData(0x7FFE0
+ 000) и дескриптора для него в LDT. Тогда при обращении к этой станице будет возникать исключение. Необхо
+ димо перезагружать селектор сегмента данных(Ds) в системных калбэках:
+o KiUserExceptionDispatcher()
+  Диспетчер исключений. Установить VEH первым в цепочке.
+  Первым обработчиком в цепочке векторных обработчиков исключений должен находится менеджер выполняющий о
+  бработку исключений возникающих при вызове стабов и пр. Список обработчиков изменяется функциями RtlAdd
+  VectoredExceptionHandle() и RtlRemoveVectoredExceptionHandler(). Эти функции должны быть захвачены для 
+  восстановления описателя обработчика менеджера в начале списка. Наиболее простой способ это захват спис
+  ка обработчиков(RtlpCalloutEntryList). Захват должен быть выполнен таким образом, дабы чтение списка не 
+  отслеживалось, в противном случае диспетчер исключений будет вызван рекурсивно из RtlCallVectoredExcept
+  ionHandlers()). Этому требованию удовлетворяет перенос начала двусвязанного списка обработчиков в сегме
+  нт не доступный для записи. Тогда при изменении списка возникнет исключение, которое будет обработано в
+  екторным обработчиком исключений описанном в этом списке.
+o KiUserCallbackDispatcher()
+  Диспетчер калбэков шадова. Захват таблицы калбэков в PEB(apfnDispatch, KernelCallbackTable).
+o KiUserApcDispatcher()
+  Диспетчер APC. Так как адрес пользовательской апк произвольный, нет возможности выполнить захват. Для с
+  тартупапк(LdrInitializeThunk()) выполнить захват её.
+ -
+Защита пользовательских калбэков(R3).
+ Все 6(XP) ядерных калбэков лежат в секции кода ntdll.dll:
+ o KiFastSystemCallRet
+ o KiUserExceptionDispatcher
+ o KiRaiseUserExceptionDispatcher
+ o KiUserCallbackDispatcher
+ o KiUserApcDispatcher
+ o LdrInitializeThunk
+ Они могут быть перенаправлены на диспетчер исключений(за исключением его самого) записью инструкции вызы
+ вающей исключение на начало калбэка. Для защиты кодовой секции использовать замену проекции файловой сек
+ ции на не файловую(нельзя изменить атрибуты страниц). Старый код:
+ 	> http://indy-vx.narod.ru/Bin/Sc.zip
+ -
+Загрузка модуля по желаемому адресу(с релокацией, R3).
+ Секция проецируется ядром по адресу из опционального заголовка в LdrpMapDll(). Загружаем необходимую баз
+ у по адресу, на который ссылается 3-й параметр NtMapViewOfSection. Возвращается STATUS_IMAGE_NOT_AT_BASE, 
+ лодер выполняет релокацию. Возможные варианты захвата сервиса:
+ o Аппаратный останов на сервис(DrX):
+ 	- Регистрация диспетчера исключений как VEH.
+ o Трассировка LdrpMapDll():
+ 	- Для поиска использовать анализ графа:
+ 		> http://indy-vx.narod.ru/Bin/IDP.zip(\IDP\User\Bin\Graph\Info.txt)
+ o Захват разрушением указателей(IDP).
+ 	> http://indy-vx.narod.ru/Bin/IDP.zip(\IDP\User\Help\Engine.pdf)
+ o Регистрация калбэка в LdrpAppCompatDllRedirectionCallbackFunction/LdrpAppCompatDllRedirectionCallbackD
+ ata и трассировка:
+ 	- Экспортируемая LdrSetAppCompatDllRedirectionCallback().
+ 		> http://indy-vx.narod.ru/Info/AppCompatDllRedirectionCallback.txt
+ 		> http://virustech.org/f/viewtopic.php?id=119
+ -
+Запуск пользовательского потока в обход перехвата диспетчера APC(R3).
+ o Восстанавливаем RtlpCalloutEntryList, для исключения глобальных VEH.
+ o Создаём удалённый поток.
+ o Формируем SEH-фрейм.
+ o Взводим TF в контексте.
+ Поток стартует с взведённым TF. После исполнения первой инструкции диспетчера апк(KiUserApcDispatcher()) 
+ генерируется трассировочное исключение. Управление получает диспетчер исключений(KiUserExceptionDispatch
+ er()). Векторные обработчики не вызываются(RtlCallVectoredExceptionHandlers()). Вызывается установленный 
+ SEH. Если диспетчер APC захвачен сплайсингом, останов генерируется после исполнения джампа. Если диспетч
+ ер APC перенаправлен на диспетчер исключений, посредством установки точки останова, прежде будет вызван 
+ SEH(если хэндлер установлен как VEH).
+ -

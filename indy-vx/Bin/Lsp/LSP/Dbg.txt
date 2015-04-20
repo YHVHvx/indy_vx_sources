@@ -1,0 +1,50 @@
+Последовательность отладки XcptDispatch().
+
+1. Проверяем маршрутизацию(DBG_XCPT_BREAK_DISPATCH) при откате брейков. Проверка слепка HmgrSnapshot и маршрутизация(HmgrLoad:).
+	...
+   	%GPCALL GP_FIND_CALLER_BELONG_TO_SNAPSHOT
+
+	test eax,eax
+	jz HmgrLoad
+	%HALT	; Фолта за пределами слепка не должно быть.
+	
+	test eax,eax
+	jnz Chain
+DBG_XCPT_BREAK_DISPATCH::
+	...
+
+2. Откатываем маршрутизацию в WSPSocketLvl0 и xAllocateHeap2ndfStub() без трассировки. Проверяем валидность SFN, определяемый через GP_FIND_CALLER_BELONG_TO_SNAPSHOT().
+   	...
+	add esp,4
+;	popfd
+	jmp dword ptr TLS.SkipIp[ecx]
+
+	...
+	add esp,4
+;	popfd
+	jmp dword ptr TLS.Ip2ndf[ecx]
+
+   При первой аллокации хипа в WSPSocket(), например из mswsock._SockGetTdiName@36 сработает брейк на проверке на повторный вызов:
+
+	...
+	%GPCALL GP_FIND_CALLER_BELONG_TO_SNAPSHOT
+	test eax,eax
+	mov edx,Tls
+	.if Zero?
+	   Int 3	; <x
+	   mov ecx,Caller2ndf.Frame
+	   %GET_GRAPH_ENTRY xXcptPostTraceStub
+	   cmp STACK_FRAME.Ip[ecx],eax
+
+   В олли возможны сторонние трапы, например в системном диспетчере(их генерит отладчик), такие трапы следует пропустить, их обработает диспетчер.
+   Произойдёт останов в AllocateHeap2ndfStub() и далее в XcptPostTraceStub(), при возврате соответственно из _SockGetTdiName@36 и из WSPSocket() в WSAStartup(), а далее из socket(). При этом апи должна отработать успешно.
+
+
+3. Отлаживаем трассировку. В макро %SROUTE_2NDF_CONTINUE и %SKIP_CONTINUE восстановлены инструкции Popfd. Первый трап возникнет после возврата из _SockGetTdiName@36(после маршрутизации через в AllocateHeap2ndfStub()). Далее все подряд инструкции трассируются. Трейс прекращается при обнаружении трапа на стабе XcptPostTraceStub(). 
+   При обнаружении инструкции Call выполняет пошагово одна инструкция, затем в DBG_XCPT_TRAP_POST_SKIP: проверяется вызов стаба ZwCreateFile(). Выполняется маршрутизация и возврат выполняется из процедуры через XcptSkipTraceStub().
+   
+4. Отлаживаем открытие девайса. Идентификация вызова в DBG_XCPT_TRAP_IS_AFD:, открытие девайса в DBG_XCPT_TRAP_AFD_OPEN:, сохранение описателя в таблице и замена на инвалидный описатель.
+
+5. Отлаживаем WahInsertHandleContext(). Регистрируется Magic, трассировка завершается.
+
+6. Отлаживаем референс на инвалидном описателе. Первый фолт в mswsock._SockGetInformation@28 на NtDeviceIoControlFile. Управление получает BadrefDispatchStub(). 

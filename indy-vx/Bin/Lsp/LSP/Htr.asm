@@ -1,0 +1,47 @@
+; Запуск трассировки описателей.
+;
+PROCESS_HANDLE_TRACING_ENABLE struct
+Flags		ULONG ?
+PROCESS_HANDLE_TRACING_ENABLE ends
+
+PROCESS_HANDLE_TRACING_ENABLE_EX struct
+Flags		ULONG ?
+TotalSlots	ULONG ?
+PROCESS_HANDLE_TRACING_ENABLE_EX ends
+
+PROCESS_HANDLE_TRACING_MAX_STACKS	equ 16
+
+HANDLE_TRACE_DB_OPEN	equ 1
+HANDLE_TRACE_DB_CLOSE	equ 2
+HANDLE_TRACE_DB_BADREF	equ 3
+
+PROCESS_HANDLE_TRACING_ENTRY struct
+Handle		HANDLE ?
+ClientId		CLIENT_ID <>
+_Type		ULONG ?	; HANDLE_TRACE_DB_*
+Stacks		PVOID PROCESS_HANDLE_TRACING_MAX_STACKS DUP (<>)
+PROCESS_HANDLE_TRACING_ENTRY ends
+
+PROCESS_HANDLE_TRACING_QUERY struct
+Handle		HANDLE ?
+TotalTraces	ULONG ?
+HandleTrace	PROCESS_HANDLE_TRACING_ENTRY 1 DUP (<>)
+PROCESS_HANDLE_TRACING_QUERY ends
+
+ProcessHandleTracing	equ 32
+
+Public DBG_LOG_ENABLE_TRACING
+
+HtEnableHandleTracing proc Api:PAPIS
+Local Tracing:PROCESS_HANDLE_TRACING_ENABLE
+	mov eax,Api
+	lea ecx,Tracing
+	mov Tracing.Flags,NULL
+	push sizeof(PROCESS_HANDLE_TRACING_ENABLE)
+	push ecx
+	push ProcessHandleTracing
+	push NtCurrentProcess
+DBG_LOG_ENABLE_TRACING::
+	Call APIS.pZwSetInformationProcess[eax]
+	ret
+HtEnableHandleTracing endp

@@ -1,0 +1,13 @@
+	.686
+	.model flat, stdcall
+	option casemap :none
+
+	include \masm32\include\ntdll.inc
+	
+	includelib \masm32\lib\ntdll.lib
+.code
+Entry proc
+
+	ret
+Entry endp
+End Entry

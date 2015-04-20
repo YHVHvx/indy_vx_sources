@@ -1,0 +1,139 @@
+Public GpCreateSnapshot
+Public GpFindCallerBelongToSnapshot
+Public GpFastCheckIpBelongToSnapshot
+
+GP_SNAPSHOT struct
+Mdl		PMDL ?	; Дескриптор буфера.
+Ip		PVOID ?	; Адрес разбираемой процедуры.
+GpBase	PVOID ?	; Базовый адрес буфера с графом(MDL.MappedSystemVa).
+GpLimit	PVOID ?	; Лимит графа(размер + GpBase).
+GP_SNAPSHOT ends
+PGP_SNAPSHOT typedef ptr GP_SNAPSHOT
+
+; +
+; Парсер создающий граф реализован без проверок диапазона буфера, 
+; что сделано для оптимизации и для поддержки расширяемых буферов. 
+; Буфер должен содержать в конце не доступную или сторожевую стран
+; ицу. Тогда при переполнении буфера исключение откатает сех. Расш
+; иряемые буфера не используем, так как граф создаётся для определ
+; ённой процедуры, размер которой не сильно меняется в версиях.
+;
+comment '
+ IP		push 4
+ IP + 1	pop edx
+ IP + 2|3	call nt!KiIpiSend
+ 		+ 1		push 0xF4240
+ 		+ 2|3	call hal!KeStallExecutionProcessor
+		'
+; +
+; Калбэк парсера. Ищет адрес возврата из KeStallExecutionProcessor().
+;
+GpCreateSnapshotParseCallback:
+	%GET_CURRENT_GRAPH_ENTRY
+GpCreateSnapshotParseCallbackInternal proc uses esi GpEntry:PVOID, Ip:PVOID, Caller:PVOID
+	mov esi,Ip
+	cmp byte ptr [esi],68H	; push 0xF4240(1000*1000)
+	jne Exit
+	cmp dword ptr [esi + 1],0F4240H
+	jne Exit
+	add esi,5
+	cmp word ptr [esi],15FFH
+	je Link
+	Call VirXasm32
+	add esi,eax
+	cmp word ptr [esi],15FFH
+	jne Exit
+Link:
+	add esi,5
+	mov eax,Caller
+	mov dword ptr [eax],esi
+Exit:
+	xor eax,eax
+	ret
+GpCreateSnapshotParseCallbackInternal endp
+
+; +
+; Создание графа.
+;
+GpCreateSnapshot proc uses ebx esi edi Gv:PENGINE_ENVIRONMENT, Ip:PVOID, ParseCallback:PVOID, ParseContext:PVOID, Snapshot:PGP_SNAPSHOT
+Local Mdl[sizeof(MDL) + 4]:BYTE
+Local Snap:GP_SNAPSHOT
+	Call SEH_Epilog_Reference
+	Call SEH_Prolog
+	mov ebx,Gv
+	assume ebx:PENGINE_ENVIRONMENT
+	xor eax,eax
+	test ebx,ebx
+	.if Zero?
+	mov ebx,fs:[PcEnvironment]
+	.endif
+	push (10 * X86_PAGE_SIZE)	; 64K
+	push eax
+	push PAGE_SIZE
+	push eax
+	push -1
+	push eax
+	push eax
+	Call [ebx].Fn.Ext.pMmAllocatePagesForMdl
+	test eax,eax
+	mov esi,eax	; PMDL
+	jz Error
+	mov Snap.Mdl,eax
+	push KernelMode
+	push eax
+	Call [ebx].Fn.Ext.pMmMapLockedPages
+	test eax,eax
+	mov Snap.GpBase,eax
+	jz Free
+	cld
+	push PAGE_NOACCESS
+	lea edi,Mdl
+	mov ecx,(sizeof(MDL) + 4)/4
+	mov Snap.GpLimit,eax
+	push edi
+	mov dword ptr MDL._Size[Mdl],(((MDL_MAPPED_TO_SYSTEM_VA or MDL_PAGES_LOCKED) shl 16) or (sizeof(MDL) + 4))
+	add MDL.MappedSystemVa[Mdl],(9 * X86_PAGE_SIZE)
+	mov MDL.ByteCount[Mdl],X86_PAGE_SIZE
+	rep movsd
+	Call [ebx].Fn.Ext.pMmProtectMdlSystemAddress
+	test eax,eax
+	mov ecx,Snap.GpLimit
+	lea edx,Ip
+	jnz Unmap
+	push eax
+	push eax
+	push ParseContext
+	push ParseCallback
+	push eax
+	push eax
+	push eax
+	push ecx
+	push edx
+	mov Snap.Ip,edx
+	Call GpParse	; * Protected by SEH!
+	cld
+	test eax,eax
+	mov ecx,sizeof(GP_SNAPSHOT)/4
+	jnz Unmap
+	mov edi,Snapshot
+	lea esi,Snap
+	rep movsd
+	jmp Exit
+Unmap:
+	push Snap.Mdl
+	push Snap.GpBase
+	Call [ebx].Fn.Ext.pMmUnmapLockedPages
+Free:
+	push Snap.Mdl
+	Call [ebx].Fn.Ext.pMmFreePagesFromMdl
+	push Snap.Mdl
+	Call [ebx].Fn.Ext.pExFreePool
+Error:
+	mov eax,STATUS_UNSUCCESSFUL
+	jmp Exit
+SEH_Epilog_Reference:
+	%GET_CURRENT_GRAPH_ENTRY
+Exit:
+	Call SEH_Epilog
+	ret
+GpCreateSnapshot endp

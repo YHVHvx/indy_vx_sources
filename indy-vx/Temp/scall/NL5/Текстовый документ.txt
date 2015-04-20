@@ -1,0 +1,58 @@
+Усечение графа.
+
+7C92AB2D _RtlCaptureImageExceptionValues@12                      $  8BFF                    mov edi,edi
+
+7C92AB36                                                         .  E8 DE57FEFF             call ntdll.RtlImageNtHeader
+7C92AB3B                                                         .  F640 5F 04              test byte ptr ds:[eax+5F],4
+7C92AB3F                                                         .  0F85 DE430200           jnz ntdll.7C94EF23
+7C92AB45                                                         .  8D45 FC                 lea eax,dword ptr ss:[ebp-4]
+7C92AB48                                                         .  50                      push eax
+7C92AB49                                                         .  6A 0A                   push 0A
+7C92AB4B                                                         .  6A 01                   push 1
+7C92AB4D                                                         .  FF75 08                 push dword ptr ss:[ebp+8]
+7C92AB50                                                         .  E8 D157FEFF             call ntdll.RtlImageDirectoryEntryToData
+
+6A273C56                                                         .  E8 3568FEFF             call ntdll_1.RtlImageNtHeader
+6A273C5B                                                         .  8BF8                    mov edi,eax
+6A273C5D                                                         .  B8 00040000             mov eax,400
+6A273C62                                                         .  66:8547 5E              test word ptr ds:[edi+5E],ax
+6A273C66                                                         .  0F85 DC6F0000           jnz ntdll_1.6A27AC48
+6A273C6C                                                         .  8D45 08                 lea eax,dword ptr ss:[ebp+8]
+6A273C6F                                                         .  50                      push eax
+6A273C70                                                         .  6A 0A                   push 0A
+6A273C72                                                         .  6A 01                   push 1
+6A273C74                                                         .  56                      push esi
+6A273C75                                                         .  E8 CA8DFEFF             call ntdll_1.RtlImageDirectoryEntryToData
+
+00AA2119                                                         .  E8 FDBDFFFF             call ntdll_1.RtlImageNtHeader
+00AA211E                                                         .  B9 00040000             mov ecx,400
+00AA2123                                                         .  66:8548 5E              test word ptr ds:[eax+5E],cx
+00AA2127                                                         .  0F85 1D1A0000           jnz ntdll_1.00AA3B4A
+00AA212D                                                         .  8D45 FC                 lea eax,dword ptr ss:[ebp-4]
+00AA2130                                                         .  50                      push eax
+00AA2131                                                         .  6A 0A                   push 0A
+00AA2133                                                         .  6A 01                   push 1
+00AA2135                                                         .  FF75 08                 push dword ptr ss:[ebp+8]
+00AA2138                                                         .  E8 53C80100             call ntdll_1.RtlImageDirectoryEntryToData
+
+Релокация и маршрутизация на образ.
+
+Удалить из графа не нужные процедуры.
+
+/SAFESEH!!!
+
+Фолт вне модуля при определении SEH COOKIE.
+
+EMUL BYPASS, строим граф для апи, трассируем его и проверяем валидность SFC.
+VEH BARRIER
+RTL для установки гейта.
+
+1. Шифрование среды.
+2. Локальная и удалённая интеграция процедуры.
+3. Оптимизация MIP_ATOM.
+4. popfd
+5. Сохранять AccessFlag в конструкторе.
+
+Реинициализация.
+Использование VEH в качестве шлюза.
+EMET EAF в pe-парсере.

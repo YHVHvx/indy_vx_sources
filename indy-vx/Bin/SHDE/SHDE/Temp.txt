@@ -1,0 +1,61 @@
+; NtReadFile
+	push NULL	; IN PULONG Key OPTIONAL
+	push NULL	; IN PLARGE_INTEGER ByteOffset OPTIONAL
+	push 4	; IN ULONG Length
+	push esi	; OUT PVOID Buffer
+	push esi	; OUT PIO_STATUS_BLOCK IoStatusBlock
+	push NULL	; IN PVOID ApcContext OPTIONAL
+	push NULL	; IN PIO_APC_ROUTINE ApcRoutine OPTIONAL
+	push NULL	; IN HANDLE Event OPTIONAL
+	%NTCALL
+; NtWriteFile
+	push NULL	; IN PULONG Key OPTIONAL
+	push NULL	; IN PLARGE_INTEGER ByteOffset OPTIONAL
+	push 4	; IN ULONG Length
+	push esi	; OUT PVOID Buffer
+	push esi	; OUT PIO_STATUS_BLOCK IoStatusBlock
+	push NULL	; IN PVOID ApcContext OPTIONAL
+	push NULL	; IN PIO_APC_ROUTINE ApcRoutine OPTIONAL
+	push NULL	; IN HANDLE Event OPTIONAL
+	%NTCALL
+; NtLockFile
+	push FALSE; IN BOOLEAN ExclusiveLock
+	push FALSE; IN BOOLEAN FailImmediately
+	push NULL	; IN ULONG Key
+	push esi	; IN PULARGE_INTEGER LockLength
+	push esi	; IN PULARGE_INTEGER LockOffset
+	push esi	; OUT PIO_STATUS_BLOCK IoStatusBlock
+	push NULL	; IN PVOID ApcContext OPTIONAL
+	push NULL	; IN PIO_APC_ROUTINE ApcRoutine OPTIONAL
+	push NULL	; IN HANDLE Event OPTIONAL
+	mov dword ptr [esi + 4],0
+	mov dword ptr [esi],4
+	%NTCALL
+; NtUnlockFile
+	push NULL
+	push esi	; IN PULARGE_INTEGER LockLength
+	push esi	; IN PULARGE_INTEGER LockOffset
+	push esi	; OUT PIO_STATUS_BLOCK IoStatusBlock
+	%NTCALL
+; NtDeviceIoControlFile
+	push NULL	; IN ULONG OutputBufferLength
+	push NULL	; OUT PVOID OutputBuffer
+	push NULL	; IN ULONG InputBufferLength
+	push NULL	; IN PVOID InputBuffer OPTIONAL
+	push 0	; IN ULONG IoControlCode
+	push esi	; OUT PIO_STATUS_BLOCK IoStatusBlock
+	push NULL	; IN PVOID ApcContext OPTIONAL
+	push NULL	; IN PIO_APC_ROUTINE ApcRoutine OPTIONAL
+	push NULL	; IN HANDLE Event OPTIONAL
+	%NTCALL
+; NtFsControlFile
+	push NULL	; IN ULONG OutputBufferLength
+	push NULL	; OUT PVOID OutputBuffer
+	push NULL	; IN ULONG InputBufferLength
+	push NULL	; IN PVOID InputBuffer OPTIONAL
+	push 0	; IN ULONG FsControlCode
+	push esi	; OUT PIO_STATUS_BLOCK IoStatusBlock
+	push NULL	; IN PVOID ApcContext OPTIONAL
+	push NULL	; IN PIO_APC_ROUTINE ApcRoutine OPTIONAL
+	push NULL	; IN HANDLE Event OPTIONAL
+	%NTCALL
